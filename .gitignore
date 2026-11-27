@@ -1,0 +1,25 @@
+# Build output
+**/bin/
+**/obj/
+**/node_modules/
+**/.next/
+**/out/
+**/TestResults/
+**/*.tsbuildinfo
+
+# Local secrets and configuration
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Editor and OS files
+.vs/
+.vscode/
+.idea/
+*.user
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

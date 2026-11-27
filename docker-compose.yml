@@ -1,0 +1,77 @@
+name: commerce
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-commerce}
+      POSTGRES_USER: ${POSTGRES_USER:-commerce}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-commerce-local}
+    ports:
+      - "5433:5432"
+    volumes:
+      - commerce-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      Database__Provider: Postgres
+      Database__Initialize: "true"
+      ConnectionStrings__Default: Host=db;Port=5432;Database=${POSTGRES_DB:-commerce};Username=${POSTGRES_USER:-commerce};Password=${POSTGRES_PASSWORD:-commerce-local}
+      Auth__Issuer: ${AUTH_ISSUER:-commerce}
+      Auth__Audience: ${AUTH_AUDIENCE:-commerce-api}
+      Auth__SigningKey: ${AUTH_SIGNING_KEY:?Set AUTH_SIGNING_KEY in .env (at least 32 characters)}
+      GetAssist__ProvisioningSecret: ${GETASSIST_PROVISIONING_SECRET:-}
+      GetAssist__SignatureHeader: ${GETASSIST_SIGNATURE_HEADER:-X-GetAssist-Signature}
+      GetAssist__RequireActiveConnection: "true"
+      HostPlatform__Name: Get Assist
+      HostPlatform__WorkspaceLaunchUrl: ${HOST_PLATFORM_LAUNCH_URL:-}
+      HostPlatform__AllowedParentOrigins: ${HOST_PLATFORM_ALLOWED_ORIGINS:-}
+      HostPlatform__OidcEnabled: "false"
+      Cors__AllowedOrigins__0: ${APP_ORIGIN:-http://localhost:3000}
+      Seed__DemoAccount: ${SEED_DEMO_ACCOUNT:-false}
+      Seed__DemoEmail: ${SEED_DEMO_EMAIL:-admin@commerce.local}
+      Seed__DemoPassword: ${SEED_DEMO_PASSWORD:-Admin123!}
+      RateLimiting__Enabled: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "5250:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:5250}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      # Who may show the dashboard in a frame (src/proxy.ts). Empty = nobody.
+      HOST_PLATFORM_ALLOWED_ORIGINS: ${HOST_PLATFORM_ALLOWED_ORIGINS:-}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+volumes:
+  commerce-db:

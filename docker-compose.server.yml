@@ -1,0 +1,17 @@
+# The live server (beside Chithii). Used ON TOP of docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.server.yml up -d --build
+# Nothing listens on the public network: the database is not published at all, and the API and the dashboard
+# listen on 127.0.0.1 only, behind nginx (commerce.chithii.com). `!override` replaces the base file's port lists.
+services:
+  db:
+    ports: !override []
+  api:
+    ports: !override
+      - "127.0.0.1:5250:8080"
+    environment:
+      # One address for both halves: nginx sends /api/ to the API, everything else to the dashboard.
+      Cors__AllowedOrigins__0: https://commerce.chithii.com
+      Seed__DemoAccount: "false"
+  web:
+    ports: !override
+      - "127.0.0.1:3000:3000"
