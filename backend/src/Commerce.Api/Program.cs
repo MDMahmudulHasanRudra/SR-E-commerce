@@ -198,7 +198,7 @@ static async Task InitializeAsync(WebApplication app)
             {
                 var auth = scope.ServiceProvider.GetRequiredService<AuthService>();
                 var email = app.Configuration["Seed:DemoEmail"] ?? "admin@commerce.local";
-                var password = app.Configuration["Seed:DemoPassword"] ?? "Admin123!";
+                var password = app.Configuration["Seed:DemoPassword"] ?? "admin@123#";
                 var company = app.Configuration["Seed:DemoCompany"] ?? "Northwind Commerce";
                 await auth.RegisterAsync(new RegisterRequest(company, "Alex Morgan", email, password,
                     "Main Store", "USD", true));

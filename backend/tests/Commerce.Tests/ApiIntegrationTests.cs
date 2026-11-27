@@ -31,6 +31,18 @@ public sealed class ApiIntegrationTests
     }
 
     [Fact]
+    public async Task Username_admin_logs_in_without_an_email_domain()
+    {
+        using var factory = new CommerceApiFactory();
+        using var client = factory.CreateClient();
+
+        var login = await client.LoginAsync("admin");
+
+        Assert.Equal("Owner", login.Role);
+        Assert.Contains("products.read", login.Permissions);
+    }
+
+    [Fact]
     public async Task Provisioning_is_idempotent_and_returns_the_api_key_only_once()
     {
         using var factory = new CommerceApiFactory();

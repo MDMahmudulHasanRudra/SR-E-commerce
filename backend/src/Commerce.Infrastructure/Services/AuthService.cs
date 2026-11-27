@@ -152,7 +152,8 @@ public sealed class AuthService
 
     public async Task<AuthResult> LoginAsync(LoginRequest request, CancellationToken ct = default)
     {
-        var email = request.Email?.Trim().ToLowerInvariant() ?? string.Empty;
+        var identifier = request.Email?.Trim().ToLowerInvariant() ?? string.Empty;
+        var email = identifier.Contains('@') ? identifier : $"{identifier}@{_options.UsernameDomain}";
         var user = await _db.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.NormalizedEmail == email && u.IsActive, ct);
         if (user is null || !PasswordHasher.Verify(request.Password ?? string.Empty, user.PasswordHash))
             throw new DomainException(DomainErrors.Unauthorized, "Invalid email or password.");

@@ -41,7 +41,7 @@ services:
       Cors__AllowedOrigins__0: ${APP_ORIGIN:-http://localhost:3000}
       Seed__DemoAccount: ${SEED_DEMO_ACCOUNT:-false}
       Seed__DemoEmail: ${SEED_DEMO_EMAIL:-admin@commerce.local}
-      Seed__DemoPassword: ${SEED_DEMO_PASSWORD:-Admin123!}
+      Seed__DemoPassword: ${SEED_DEMO_PASSWORD:-admin@123#}
       RateLimiting__Enabled: "true"
     depends_on:
       db:

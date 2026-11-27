@@ -47,7 +47,7 @@ dotnet run --project src/Commerce.Api
 In Development the demo account is seeded on first run when no tenant exists:
 
 ```text
-admin@commerce.local / Admin123!
+admin / admin@123#   (email form also works: admin@commerce.local)
 ```
 
 The seed creates a tenant, owner, workspace, warehouse, tax rate, 10 products,

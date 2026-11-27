@@ -82,8 +82,8 @@ npm run dev
 Demo credentials (development seed):
 
 ```text
-admin@commerce.local
-Admin123!
+Username: admin (or admin@commerce.local)
+Password: admin@123#
 ```
 
 ## Tests

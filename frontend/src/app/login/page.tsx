@@ -10,14 +10,14 @@ import { parseHostSignIn, readHostSignInRaw } from "@/lib/hostSignIn";
 
 const noSubscribe = () => () => {};
 
-const demoEmail = "admin@commerce.local";
-const demoPassword = "Admin123!";
+const demoUsername = "admin";
+const demoPassword = "admin@123#";
 const spark = [0, 0, 13.5, 0, 0, 17.9, 0, 7.4, 0, 0, 5.7, 0, 10.9, 9.3];
 
 export default function LoginPage() {
   const router = useRouter();
   const { session, ready, signIn } = useAuth();
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +33,7 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      await signIn(email.trim(), password);
+      await signIn(identifier.trim(), password);
       router.replace("/dashboard");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to sign in. Please try again.");
@@ -160,17 +160,18 @@ export default function LoginPage() {
               )}
 
               <div className="space-y-1.5">
-                <label htmlFor="email" className="block text-xs font-medium text-ink-soft">
-                  Work email
+                <label htmlFor="identifier" className="block text-xs font-medium text-ink-soft">
+                  Email or username
                 </label>
                 <input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
+                  id="identifier"
+                  type="text"
+                  inputMode="email"
+                  autoComplete="username"
                   required
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="you@company.com"
+                  value={identifier}
+                  onChange={(event) => setIdentifier(event.target.value)}
+                  placeholder="you@company.com or admin"
                   className="h-11 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink placeholder:text-[#a6a99e] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/10"
                 />
               </div>
@@ -228,7 +229,7 @@ export default function LoginPage() {
                 <div>
                   <p className="text-[11px] font-medium text-ink-soft">Demo workspace</p>
                   <p className="mt-0.5 font-mono text-[10.5px] text-muted">
-                    {demoEmail} · {demoPassword}
+                    {demoUsername} · {demoPassword}
                   </p>
                 </div>
                 <Button
@@ -236,7 +237,7 @@ export default function LoginPage() {
                   variant="secondary"
                   size="sm"
                   onClick={() => {
-                    setEmail(demoEmail);
+                    setIdentifier(demoUsername);
                     setPassword(demoPassword);
                     setError(null);
                   }}

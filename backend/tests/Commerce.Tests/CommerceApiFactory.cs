@@ -19,7 +19,7 @@ namespace Commerce.Tests;
 public sealed class CommerceApiFactory : WebApplicationFactory<Program>
 {
     public const string DemoEmail = "admin@commerce.local";
-    public const string DemoPassword = "Admin123!";
+    public const string DemoPassword = "admin@123#";
     public const string ProvisioningSecret = "test-provisioning-secret";
 
     public RecordingWebhookHandler Webhooks { get; } = new();

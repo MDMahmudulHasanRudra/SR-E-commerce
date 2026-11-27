@@ -5,6 +5,8 @@ public sealed class AuthOptions
     public string Issuer { get; set; } = "commerce";
     public string Audience { get; set; } = "commerce-api";
     public string SigningKey { get; set; } = string.Empty;
+    /// <summary>Domain appended to bare usernames such as "admin" so they resolve to an email login.</summary>
+    public string UsernameDomain { get; set; } = "commerce.local";
     public int AccessTokenMinutes { get; set; } = 30;
     public int RefreshTokenDays { get; set; } = 14;
 }
