@@ -30,6 +30,36 @@ npm run build
 node .next/standalone/server.js   # serves on $PORT, default 3000
 ```
 
+## Screens
+
+| Route | Purpose |
+| --- | --- |
+| `/login`, `/register` | Sign in (email or username) and tenant/workspace registration |
+| `/dashboard` | KPIs, sales trend, low-stock items, recent orders |
+| `/products`, `/products/new`, `/products/[id]`, `/products/[id]/edit` | Catalog, variants/attributes, image gallery, price history |
+| `/categories`, `/brands` | Category hierarchy and brand CRUD |
+| `/inventory` | Stock levels, movements, warehouses, reorder thresholds |
+| `/orders`, `/orders/[id]`, `/orders/[id]/invoice` | Orders, returns, printable tax invoice |
+| `/customers`, `/customers/[id]` | Customers, addresses, duplicates, tags |
+| `/offers` | Offers, coupons and the effective-price quote simulator |
+| `/purchasing` | Suppliers, purchase orders, receipts, supplier payments |
+| `/finance` | Payments, refunds, expenses, receivables/payables |
+| `/reports` | Sales, product, stock and customer reports with CSV export |
+| `/settings` | Company, branches, team, tax rates, password, audit log |
+| `/integration` | Get Assist status, API keys, events, deliveries |
+| `/sso/launch` | Host launch hand-off |
+
+## Shell
+
+- `⌘K` / `Ctrl+K` opens the command palette (products, orders, customers and
+  navigation routes).
+- `lib/permissions.ts` mirrors the backend role policies; the UI hides actions
+  the API would reject.
+- `lib/theme.tsx` stores the theme preset, density and brand name. Embedded
+  mode is enabled with `?embedded=true` or a host launch context and shows a
+  "Back to Workspace" action.
+- `lib/csv.ts` builds the product import template and client-side CSV exports.
+
 ## Notes
 
 - `NEXT_PUBLIC_API_URL` is inlined at build time and must be reachable from the

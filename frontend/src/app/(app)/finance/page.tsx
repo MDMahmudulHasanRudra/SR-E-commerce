@@ -1,9 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { api, query, type Paged } from "@/lib/api";
 import { errorMessage, useApi, useDebounced } from "@/lib/hooks";
-import type { Expense, FinanceSummary, OrderListItem, Payment, Refund } from "@/lib/types";
+import { downloadCsvRows } from "@/lib/csv";
+import type { Expense, FinanceSummary, OrderListItem, Payment, PurchaseOrderListItem, Refund } from "@/lib/types";
 import { currency, date, dateTime } from "@/lib/format";
 import { BarChart, CHART_COLORS, Donut } from "@/components/charts";
 import { Icon } from "@/components/icons";
@@ -16,6 +18,7 @@ import {
   EmptyState,
   ErrorState,
   Field,
+  InfoRow,
   Input,
   Modal,
   PageHeader,
@@ -61,6 +64,8 @@ export default function FinancePage() {
   const refunds = useApi<Refund[]>("/api/v1/refunds");
   const expenses = useApi<Expense[]>("/api/v1/expenses");
   const orders = useApi<Paged<OrderListItem>>("/api/v1/orders?pageSize=200");
+  const purchaseOrders = useApi<Paged<PurchaseOrderListItem>>("/api/v1/purchase-orders?pageSize=200");
+  const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
 
   const [payOpen, setPayOpen] = useState(false);
   const [payForm, setPayForm] = useState({
@@ -102,6 +107,14 @@ export default function FinancePage() {
   }, []);
 
   const orderOptions = useMemo(() => orders.data?.items ?? [], [orders.data]);
+  const receivableOrders = useMemo(
+    () => orderOptions.filter((o) => o.status !== "Cancelled" && (o.paymentStatus === "Unpaid" || o.paymentStatus === "Partial")),
+    [orderOptions],
+  );
+  const payablePOs = useMemo(
+    () => (purchaseOrders.data?.items ?? []).filter((po) => po.status !== "Cancelled" && po.total - po.amountPaid > 0.005),
+    [purchaseOrders.data],
+  );
   const selectedOrder = useMemo(
     () => orderOptions.find((order) => order.id === payForm.orderId),
     [orderOptions, payForm.orderId],
@@ -274,6 +287,37 @@ export default function FinancePage() {
       >
         <Button
           variant="secondary"
+          icon="download"
+          onClick={() => {
+            if (tab === "expenses" && expenses.data) {
+              downloadCsvRows(
+                "expenses.csv",
+                ["Date", "Category", "Description", "Method", "Reference", "Amount"],
+                expenses.data.map((e) => [e.paidAtUtc, e.category, e.description, e.method, e.reference ?? "", e.amount.toFixed(2)]),
+              );
+            } else if (payments.data) {
+              downloadCsvRows(
+                "payments.csv",
+                ["Date", "Order", "Customer", "Direction", "Method", "Reference", "Status", "Amount", "Currency"],
+                payments.data.items.map((p) => [
+                  p.paidAtUtc,
+                  p.orderNumber ?? "",
+                  p.customerName ?? "",
+                  p.direction,
+                  p.method,
+                  p.reference ?? "",
+                  p.status,
+                  p.amount.toFixed(2),
+                  p.currencyCode,
+                ]),
+              );
+            }
+          }}
+        >
+          Export CSV
+        </Button>
+        <Button
+          variant="secondary"
           icon="receipt"
           onClick={() => {
             setTab("expenses");
@@ -371,6 +415,7 @@ export default function FinancePage() {
               { value: "payments", label: "Payments", count: payments.data?.totalCount ?? 0 },
               { value: "refunds", label: "Refunds", count: refunds.data?.length ?? 0 },
               { value: "expenses", label: "Expenses", count: expenses.data?.length ?? 0 },
+              { value: "balances", label: "Receivables & Payables", count: receivableOrders.length + payablePOs.length },
             ]}
           />
           <div className="flex flex-wrap items-center gap-2">
@@ -445,7 +490,7 @@ export default function FinancePage() {
                 </THead>
                 <tbody>
                   {payments.data.items.map((payment) => (
-                    <TR key={payment.id}>
+                    <TR key={payment.id} onClick={() => setSelectedPayment(payment)}>
                       <TD className="whitespace-nowrap text-[11px] text-muted">{dateTime(payment.paidAtUtc)}</TD>
                       <TD className="font-mono text-[11px] text-ink-soft">{payment.orderNumber ?? "—"}</TD>
                       <TD className="max-w-[160px] truncate text-[11.5px]">{payment.customerName ?? "Walk-in"}</TD>
@@ -598,6 +643,69 @@ export default function FinancePage() {
               </Table>
             )}
           </>
+        )}
+        {tab === "balances" && (
+          <div className="grid gap-5 p-4 lg:grid-cols-2">
+            <div className="rounded-xl border border-line bg-[#faf9f5] p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-ink">Customer receivables</p>
+                  <p className="text-[11px] text-muted">Unpaid or partially paid orders</p>
+                </div>
+                <Badge tone="amber">{receivableOrders.length}</Badge>
+              </div>
+              {receivableOrders.length === 0 ? (
+                <p className="py-6 text-center text-xs text-muted">No outstanding receivables.</p>
+              ) : (
+                <div className="divide-y divide-line">
+                  {receivableOrders.map((order) => (
+                    <div key={order.id} className="flex items-center justify-between gap-2 py-2.5 text-xs">
+                      <div className="min-w-0">
+                        <Link href={`/orders/${order.id}`} className="font-mono font-medium text-brand hover:underline">
+                          {order.orderNumber}
+                        </Link>
+                        <p className="truncate text-[11px] text-muted">{order.customerName}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <StatusBadge status={order.paymentStatus} dot={false} />
+                        <span className="num font-medium">{currency(order.grandTotal, order.currencyCode)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-line bg-[#faf9f5] p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-ink">Supplier payables</p>
+                  <p className="text-[11px] text-muted">Purchase orders with balance owed</p>
+                </div>
+                <Link href="/purchasing" className="text-[11px] font-medium text-brand hover:underline">
+                  Manage in Purchasing
+                </Link>
+              </div>
+              {payablePOs.length === 0 ? (
+                <p className="py-6 text-center text-xs text-muted">No outstanding supplier payables.</p>
+              ) : (
+                <div className="divide-y divide-line">
+                  {payablePOs.map((po) => (
+                    <div key={po.id} className="flex items-center justify-between gap-2 py-2.5 text-xs">
+                      <div className="min-w-0">
+                        <p className="font-mono font-medium text-ink">{po.poNumber}</p>
+                        <p className="truncate text-[11px] text-muted">{po.supplierName}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="num font-medium text-amber-700">{currency(po.total - po.amountPaid)} due</p>
+                        <p className="text-[10px] text-muted">of {currency(po.total)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </Card>
 
@@ -822,6 +930,43 @@ export default function FinancePage() {
             />
           </Field>
         </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(selectedPayment)}
+        onClose={() => setSelectedPayment(null)}
+        title="Payment details"
+        description={selectedPayment ? dateTime(selectedPayment.paidAtUtc) : undefined}
+        size="sm"
+        footer={
+          selectedPayment ? (
+            <>
+              {selectedPayment.orderId && (
+                <Link href={`/orders/${selectedPayment.orderId}`}>
+                  <Button variant="secondary" size="sm">
+                    Open order
+                  </Button>
+                </Link>
+              )}
+              <Button variant="primary" size="sm" onClick={() => setSelectedPayment(null)}>
+                Close
+              </Button>
+            </>
+          ) : undefined
+        }
+      >
+        {selectedPayment && (
+          <div className="divide-y divide-[#efede5]">
+            <InfoRow label="Amount" value={currency(selectedPayment.amount, selectedPayment.currencyCode)} />
+            <InfoRow label="Direction" value={selectedPayment.direction} />
+            <InfoRow label="Method" value={<span className="capitalize">{selectedPayment.method}</span>} />
+            <InfoRow label="Status" value={<StatusBadge status={selectedPayment.status} />} />
+            <InfoRow label="Order" value={selectedPayment.orderNumber ?? "General payment"} />
+            <InfoRow label="Customer" value={selectedPayment.customerName ?? "Walk-in"} />
+            <InfoRow label="Reference" value={selectedPayment.reference ?? "—"} />
+            <InfoRow label="Notes" value={selectedPayment.notes ?? "—"} />
+          </div>
+        )}
       </Modal>
 
       <ConfirmModal

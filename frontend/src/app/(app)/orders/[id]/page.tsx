@@ -56,7 +56,12 @@ const actionsFor = (status: string): Action[] => {
         { label: "Cancel", target: "Cancelled", tone: "danger" },
       ];
     case "Shipped":
-      return [{ label: "Mark delivered", target: "Delivered", tone: "primary" }];
+      return [
+        { label: "Mark delivered", target: "Delivered", tone: "primary" },
+        { label: "Mark returned", target: "Returned", tone: "danger" },
+      ];
+    case "Delivered":
+      return [{ label: "Mark returned", target: "Returned", tone: "danger" }];
     default:
       return [];
   }
@@ -90,6 +95,7 @@ export default function OrderDetailPage() {
 
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnForm, setReturnForm] = useState({ reason: "", amount: "" });
+  const [returnQty, setReturnQty] = useState<Record<string, number>>({});
   const [returnBusy, setReturnBusy] = useState(false);
 
   const balance = useMemo(
@@ -197,14 +203,27 @@ export default function OrderDetailPage() {
     }
     setReturnBusy(true);
     try {
+      const selectedItems = data.items
+        .map((item) => ({
+          orderItemId: item.id,
+          sku: item.sku,
+          productName: item.productName,
+          quantity: returnQty[item.id] ?? 0,
+        }))
+        .filter((x) => x.quantity > 0);
       const updated = await api<OrderDetail>(`/api/v1/orders/${data.id}/returns`, {
         method: "POST",
-        body: { reason: returnForm.reason, refundAmount: amount },
+        body: {
+          reason: returnForm.reason,
+          refundAmount: amount,
+          itemsJson: selectedItems.length > 0 ? JSON.stringify(selectedItems) : null,
+        },
       });
       setData(updated);
       push({ title: "Return requested", description: "A manager can approve or reject it from the returns tab." });
       setReturnOpen(false);
       setReturnForm({ reason: "", amount: "" });
+      setReturnQty({});
       setTab("returns");
     } catch (cause) {
       push({ tone: "error", title: "Could not create return", description: errorMessage(cause) });
@@ -244,6 +263,13 @@ export default function OrderDetailPage() {
         <PageHeader eyebrow="Order" title={data.orderNumber} description={`Placed ${dateTime(data.placedAtUtc)} · ${data.items.length} line item(s)`}>
           <StatusBadge status={data.paymentStatus} />
           <StatusBadge status={data.status} />
+          {data.invoice && (
+            <Link href={`/orders/${data.id}/invoice`}>
+              <Button variant="secondary" icon="printer">
+                Invoice
+              </Button>
+            </Link>
+          )}
           {canPay && (
             <Button variant="secondary" icon="wallet" onClick={() => {
               setPaymentForm((current) => ({ ...current, amount: balance.toFixed(2) }));
@@ -386,6 +412,11 @@ export default function OrderDetailPage() {
               />
               {canReturn && (
                 <Button variant="secondary" size="sm" icon="refresh" onClick={() => {
+                  const initialQty: Record<string, number> = {};
+                  data.items.forEach((item) => {
+                    initialQty[item.id] = item.quantity;
+                  });
+                  setReturnQty(initialQty);
                   setReturnForm({ reason: "", amount: String(data.grandTotal) });
                   setReturnOpen(true);
                 }}>
@@ -544,7 +575,21 @@ export default function OrderDetailPage() {
           </Card>
 
           <Card>
-            <CardHeader title="Invoice" action={<Badge tone={data.invoice ? "brand" : "zinc"}>{data.invoice ? data.invoice.status : "Not issued"}</Badge>} />
+            <CardHeader
+              title="Invoice"
+              action={
+                <div className="flex items-center gap-2">
+                  {data.invoice && (
+                    <Link href={`/orders/${data.id}/invoice`}>
+                      <Button variant="ghost" size="sm" icon="printer">
+                        Print
+                      </Button>
+                    </Link>
+                  )}
+                  <Badge tone={data.invoice ? "brand" : "zinc"}>{data.invoice ? data.invoice.status : "Not issued"}</Badge>
+                </div>
+              }
+            />
             {data.invoice ? (
               <CardBody className="divide-y divide-[#efede5] py-0">
                 <InfoRow label="Number" value={<span className="font-mono text-[11px]">{data.invoice.invoiceNumber}</span>} />
@@ -710,6 +755,39 @@ export default function OrderDetailPage() {
             void requestReturn();
           }}
         >
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-ink-soft">Items to return</p>
+            {data.items.map((item) => {
+              const qty = returnQty[item.id] ?? 0;
+              return (
+                <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-line bg-[#faf9f5] px-3 py-2 text-xs">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-ink">{item.productName}</p>
+                    <p className="font-mono text-[10px] text-muted">
+                      {item.sku} · max {item.quantity} · {currency(item.lineTotal / Math.max(1, item.quantity), data.currencyCode)}/ea
+                    </p>
+                  </div>
+                  <Input
+                    type="number"
+                    min="0"
+                    max={item.quantity}
+                    value={qty}
+                    onChange={(event) => {
+                      const next = Math.max(0, Math.min(item.quantity, Number(event.target.value) || 0));
+                      const updatedMap = { ...returnQty, [item.id]: next };
+                      setReturnQty(updatedMap);
+                      const suggested = data.items.reduce((sum, line) => {
+                        const q = updatedMap[line.id] ?? 0;
+                        return sum + (line.lineTotal / Math.max(1, line.quantity)) * q;
+                      }, 0);
+                      setReturnForm((prev) => ({ ...prev, amount: suggested.toFixed(2) }));
+                    }}
+                    className="h-8 w-20"
+                  />
+                </div>
+              );
+            })}
+          </div>
           <Field label="Reason" required>
             <Textarea
               value={returnForm.reason}

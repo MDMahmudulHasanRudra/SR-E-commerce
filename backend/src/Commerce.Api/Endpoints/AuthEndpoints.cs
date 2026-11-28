@@ -56,6 +56,13 @@ public static class AuthEndpoints
             Results.Ok(await auth.GetWorkspacesAsync(UserId(user), ct)))
             .RequireAuthorization("Member");
 
+        group.MapPost("/change-password", async (ChangePasswordRequest request, ClaimsPrincipal user, AuthService auth,
+            CancellationToken ct) =>
+        {
+            await auth.ChangePasswordAsync(UserId(user), request, ct);
+            return Results.NoContent();
+        }).RequireAuthorization("Member").RequireRateLimiting("auth");
+
         group.MapPost("/switch-workspace", async (SwitchWorkspaceRequest request, ClaimsPrincipal user,
             AuthService auth, TokenService tokens, CancellationToken ct) =>
         {

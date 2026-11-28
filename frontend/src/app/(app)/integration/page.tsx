@@ -21,6 +21,7 @@ import {
   Input,
   Modal,
   PageHeader,
+  Select,
   Skeleton,
   StatusBadge,
   TD,
@@ -66,6 +67,31 @@ export default function IntegrationPage() {
 
   const [ssoResult, setSsoResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [ssoBusy, setSsoBusy] = useState(false);
+
+  const [testerKey, setTesterKey] = useState("");
+  const [testerEndpoint, setTesterEndpoint] = useState("/api/v1/integrations/products/search?q=&page=1&pageSize=5");
+  const [testerBusy, setTesterBusy] = useState(false);
+  const [testerOutput, setTesterOutput] = useState<{ status: number; body: string } | null>(null);
+
+  async function runApiTest() {
+    if (!testerKey.trim()) {
+      push({ tone: "error", title: "Paste an API key (cmk_…) to run a live read test" });
+      return;
+    }
+    setTesterBusy(true);
+    setTesterOutput(null);
+    try {
+      const response = await fetch(`${API_URL}${testerEndpoint}`, {
+        headers: { "X-Api-Key": testerKey.trim() },
+      });
+      const text = await response.text();
+      setTesterOutput({ status: response.status, body: prettyJson(text) });
+    } catch (cause) {
+      setTesterOutput({ status: 0, body: errorMessage(cause) });
+    } finally {
+      setTesterBusy(false);
+    }
+  }
 
   async function createKey() {
     if (!keyForm.name.trim()) {
@@ -625,6 +651,90 @@ export default function IntegrationPage() {
                   </div>
                 ))}
               </div>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Live Host Read-API &amp; AI Tool Tester"
+              description="Simulate a Get Assist AI or backend call using a scoped X-Api-Key."
+              action={<Badge tone="zinc">Read-only</Badge>}
+            />
+            <CardBody className="space-y-4">
+              <div className="grid gap-3 lg:grid-cols-[1fr_1.4fr_auto] lg:items-end">
+                <Field label="X-Api-Key">
+                  <Input
+                    type="password"
+                    value={testerKey}
+                    onChange={(event) => setTesterKey(event.target.value)}
+                    placeholder="cmk_..."
+                    className="font-mono text-xs"
+                  />
+                </Field>
+                <Field label="Logical AI capability / endpoint">
+                  <Select value={testerEndpoint} onChange={(event) => setTesterEndpoint(event.target.value)}>
+                    <option value="/api/v1/integrations/products/search?q=&page=1&pageSize=5">
+                      commerce.searchProducts — GET /products/search
+                    </option>
+                    <option value="/api/v1/integrations/offers/active">
+                      commerce.getActiveOffers — GET /offers/active
+                    </option>
+                    <option value="/api/v1/integrations/customers/search?q=&page=1&pageSize=5">
+                      GET /customers/search
+                    </option>
+                  </Select>
+                </Field>
+                <Button variant="primary" icon="plug" loading={testerBusy} onClick={() => void runApiTest()}>
+                  Test endpoint
+                </Button>
+              </div>
+              {testerOutput && (
+                <div className="space-y-2">
+                  <Badge tone={testerOutput.status >= 200 && testerOutput.status < 300 ? "emerald" : "rose"}>
+                    HTTP {testerOutput.status}
+                  </Badge>
+                  <pre className="max-h-[260px] overflow-auto rounded-lg border border-line bg-[#faf9f5] p-3 font-mono text-[10.5px] leading-relaxed text-ink-soft">
+                    {testerOutput.body}
+                  </pre>
+                </div>
+              )}
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Event catalog &amp; webhook verification"
+              description="Delivered asynchronously from the transactional outbox with HMAC-SHA256 signatures."
+            />
+            <CardBody className="space-y-4">
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  "commerce.product.created",
+                  "commerce.product.updated",
+                  "commerce.price.changed",
+                  "commerce.stock.changed",
+                  "commerce.order.created",
+                  "commerce.order.confirmed",
+                  "commerce.order.shipped",
+                  "commerce.order.delivered",
+                  "commerce.order.cancelled",
+                  "commerce.payment.recorded",
+                  "commerce.refund.completed",
+                ].map((evt) => (
+                  <span
+                    key={evt}
+                    className="rounded-md border border-line bg-[#faf9f5] px-2 py-1 font-mono text-[10.5px] text-ink-soft"
+                  >
+                    {evt}
+                  </span>
+                ))}
+              </div>
+              <p className="text-[11px] leading-relaxed text-muted">
+                Verify <span className="font-mono">X-Commerce-Signature: sha256=&lt;hex&gt;</span> by computing{" "}
+                <span className="font-mono">HMAC_SHA256(webhookSecret, &quot;&#123;X-Commerce-Timestamp&#125;.&#123;rawBody&#125;&quot;)</span>{" "}
+                and deduplicate on <span className="font-mono">X-Commerce-Event-Id</span>. Host lifecycle actions:{" "}
+                <span className="font-mono">POST /api/v1/integrations/connection/key|pause|resume</span>.
+              </p>
             </CardBody>
           </Card>
         </div>

@@ -20,6 +20,9 @@ operations are tenant- and workspace-scoped.
   updates by SKU and reports created/updated counts.
 - Product deletion is a soft delete (`IsDeleted`); the product disappears from
   normal queries and stock views.
+- Changing a variant price on update records a `PriceChange` row (old price, new
+  price, reason). `GET /api/v1/products/{id}/price-history` returns the newest
+  200 entries, shown on the product detail screen.
 - Product create/update/archive emits integration events (see
   `EVENTS_AND_WEBHOOKS.md`).
 
@@ -42,8 +45,10 @@ Role rules: read = Member; create/update/delete/import = Manager or above.
 - Low-stock rows are determined by the variant's `ReorderPoint` compared with
   available quantity. The `GET /api/v1/inventory/low-stock` endpoint and
   `?lowStock=true` filter use this rule.
-- Reorder point/quantity are persisted on stock items. The demo seeder sets
-  them; there is no dedicated reorder-settings endpoint or screen yet.
+- Reorder point/quantity are persisted on stock items and editable through
+  `PUT /api/v1/inventory/reorder` (Manager+) and the Reorder action on the
+  inventory screen. Setting thresholds for a variant with no stock record
+  creates a zero-quantity record for that warehouse.
 
 Role rules: read = Member; adjust = Staff+; warehouses/transfers = Manager+.
 
@@ -199,6 +204,12 @@ Role rules: read = Member; record payment = Staff+; refunds/expenses = Manager+.
 - Audit log: paginated, searchable list of recorded actions with user and
   timestamp.
 - Workspace list is also available through `/api/v1/auth/workspaces`.
+- Branches: `POST /api/v1/settings/workspaces` adds a workspace to the tenant,
+  grants the caller a membership there and creates a default `MAIN` warehouse.
+  Switch into it with `POST /api/v1/auth/switch-workspace`.
+- Password change: `POST /api/v1/auth/change-password` verifies the current
+  password, stores a new PBKDF2 hash and revokes every refresh token for the
+  account (other sessions end when their access token expires).
 
 Role rules: read = Member; changes = Admin (and owner rules inside the
 service).

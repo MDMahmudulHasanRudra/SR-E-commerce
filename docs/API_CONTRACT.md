@@ -137,6 +137,7 @@ Logs and error responses use the same value.
 | GET | `/api/v1/auth/me` | Member |
 | GET | `/api/v1/auth/workspaces` | Member |
 | POST | `/api/v1/auth/switch-workspace` | Member |
+| POST | `/api/v1/auth/change-password` | Member, rate-limited |
 | GET | `/api/v1/auth/sso/status` | anonymous |
 
 `POST /api/v1/auth/register`
@@ -146,7 +147,7 @@ Logs and error responses use the same value.
   "companyName": "Northwind Commerce",
   "fullName": "Alex Morgan",
   "email": "admin@commerce.local",
-  "password": "Admin123!",
+  "password": "admin@123#",
   "workspaceName": "Main Store",
   "currency": "USD",
   "seedDemoData": true
@@ -156,8 +157,11 @@ Logs and error responses use the same value.
 `POST /api/v1/auth/login`
 
 ```json
-{ "email": "admin@commerce.local", "password": "Admin123!" }
+{ "email": "admin@commerce.local", "password": "admin@123#" }
 ```
+
+`email` accepts a bare username too: `"admin"` is resolved to
+`admin@{Auth:UsernameDomain}` (`commerce.local` by default) before lookup.
 
 Auth response:
 
@@ -191,12 +195,23 @@ Auth response:
 
 Returns the same auth response scoped to the new workspace.
 
+`POST /api/v1/auth/change-password`
+
+```json
+{ "currentPassword": "admin@123#", "newPassword": "NewPassword123!" }
+```
+
+Returns `204`. A wrong current password returns `401`; a new password shorter
+than 8 characters returns `400`. Changing the password revokes every refresh
+token for the account, so other sessions end when their access token expires.
+
 ### Catalog
 
 | Method | Path | Auth |
 | --- | --- | --- |
 | GET | `/api/v1/products` | Member |
 | GET | `/api/v1/products/{id}` | Member |
+| GET | `/api/v1/products/{id}/price-history` | Member |
 | POST | `/api/v1/products` | Manager |
 | PUT | `/api/v1/products/{id}` | Manager |
 | DELETE | `/api/v1/products/{id}` | Manager |
@@ -242,6 +257,25 @@ Product list filters: `search`, `categoryId`, `brandId`, `status`, `lowStock`,
 
 CSV import accepts `text/csv`, `text/plain`, or a multipart form body.
 
+`GET /api/v1/products/{id}/price-history` returns up to 200 variant price
+changes, newest first, recorded automatically when `PUT /api/v1/products/{id}`
+changes a variant price:
+
+```json
+[
+  {
+    "variantId": "…",
+    "variantName": "Default",
+    "sku": "LAMP-AUR-01-STD",
+    "oldPrice": 59.0,
+    "newPrice": 64.0,
+    "reason": "Product update",
+    "changedBy": null,
+    "changedAtUtc": "2026-11-28T09:15:00Z"
+  }
+]
+```
+
 ### Inventory
 
 | Method | Path | Auth |
@@ -254,6 +288,7 @@ CSV import accepts `text/csv`, `text/plain`, or a multipart form body.
 | GET | `/api/v1/inventory/movements` | Member |
 | POST | `/api/v1/inventory/adjust` | Staff |
 | POST | `/api/v1/inventory/transfer` | Manager |
+| PUT | `/api/v1/inventory/reorder` | Manager |
 
 Stock filters: `search`, `warehouseId`, `lowStock`, `page`, `pageSize`.
 Movement filters: `variantId`, `warehouseId`, `type`, `page`, `pageSize`.
@@ -274,6 +309,13 @@ Transfer:
   "quantity": 5,
   "note": "Rebalance"
 }
+```
+
+Reorder thresholds (creates the stock record with zero quantities if the
+variant has never been stocked in that warehouse):
+
+```json
+{ "warehouseId": "…", "variantId": "…", "reorderPoint": 5, "reorderQuantity": 20 }
 ```
 
 ### Customers
@@ -432,6 +474,7 @@ Query parameters: `from`, `to`, `take` (products), `lowStock` (stock), and
 | --- | --- | --- |
 | GET/PUT | `/api/v1/settings/company` | Member / Admin |
 | GET | `/api/v1/settings/workspaces` | Member |
+| POST | `/api/v1/settings/workspaces` | Admin |
 | GET/POST | `/api/v1/settings/team` | Member / Admin |
 | PUT | `/api/v1/settings/team/{userId}` | Admin |
 | GET/POST | `/api/v1/settings/tax-rates` | Member / Admin |
@@ -439,6 +482,16 @@ Query parameters: `from`, `to`, `take` (products), `lowStock` (stock), and
 | GET | `/api/v1/settings/audit` | Admin |
 
 Audit query: `search`, `page`, `pageSize`.
+
+`POST /api/v1/settings/workspaces` creates a branch in the current tenant:
+
+```json
+{ "name": "Downtown Branch", "currencyCode": "EUR", "timeZone": "Europe/Berlin" }
+```
+
+The caller receives a membership in the new workspace, and a default
+`MAIN` warehouse is created so stock can be tracked there immediately. The
+response has the same shape as the workspace list.
 
 ### Integration settings (workspace admin)
 

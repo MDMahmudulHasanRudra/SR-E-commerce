@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { query, type Paged } from "@/lib/api";
 import { useApi, useDebounced } from "@/lib/hooks";
+import { downloadCsvRows } from "@/lib/csv";
 import type { OrderListItem } from "@/lib/types";
 import { currency, dateTime, number } from "@/lib/format";
 import { NewOrderModal } from "@/components/NewOrderModal";
@@ -15,6 +16,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  Input,
   PageHeader,
   Pagination,
   SearchInput,
@@ -34,6 +36,9 @@ export default function OrdersPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [paymentStatus, setPaymentStatus] = useState("");
+  const [customerId, setCustomerId] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [page, setPage] = useState(1);
   const [newOpen, setNewOpen] = useState(false);
   const debouncedSearch = useDebounced(search);
@@ -42,18 +47,22 @@ export default function OrdersPage() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("status")) setStatus(params.get("status") ?? "");
     if (params.get("paymentStatus")) setPaymentStatus(params.get("paymentStatus") ?? "");
+    if (params.get("customerId")) setCustomerId(params.get("customerId") ?? "");
     if (params.get("new") === "1") setNewOpen(true);
   }, []);
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, status, paymentStatus]);
+  }, [debouncedSearch, status, paymentStatus, customerId, from, to]);
 
   const orders = useApi<Paged<OrderListItem>>(
     `/api/v1/orders${query({
       search: debouncedSearch,
       status,
       paymentStatus,
+      customerId,
+      from,
+      to,
       page,
       pageSize: 12,
     })}`,
@@ -76,6 +85,32 @@ export default function OrdersPage() {
         title="Orders"
         description="Track the full order lifecycle from pending to delivered, with payments and returns attached."
       >
+        <Button
+          variant="secondary"
+          icon="download"
+          disabled={!orders.data || orders.data.items.length === 0}
+          onClick={() => {
+            if (!orders.data) return;
+            downloadCsvRows(
+              "orders.csv",
+              ["OrderNumber", "Customer", "Email", "Status", "PaymentStatus", "Fulfillment", "Items", "Total", "Currency", "PlacedAtUtc"],
+              orders.data.items.map((o) => [
+                o.orderNumber,
+                o.customerName,
+                o.customerEmail ?? "",
+                o.status,
+                o.paymentStatus,
+                o.fulfillmentStatus,
+                o.itemCount,
+                o.grandTotal.toFixed(2),
+                o.currencyCode,
+                o.placedAtUtc,
+              ]),
+            );
+          }}
+        >
+          Export CSV
+        </Button>
         <Button variant="primary" icon="plus" onClick={() => setNewOpen(true)}>
           New order
         </Button>
@@ -122,7 +157,7 @@ export default function OrdersPage() {
                 </option>
               ))}
             </Select>
-            {(status || paymentStatus) && (
+            {(status || paymentStatus || customerId || from || to) && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -130,12 +165,33 @@ export default function OrdersPage() {
                 onClick={() => {
                   setStatus("");
                   setPaymentStatus("");
+                  setCustomerId("");
+                  setFrom("");
+                  setTo("");
                 }}
               >
                 Clear
               </Button>
             )}
           </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 border-b border-line bg-[#faf9f5] px-3.5 py-2.5 text-[11px] text-muted">
+          <span>Date range:</span>
+          <Input
+            type="date"
+            value={from}
+            onChange={(event) => setFrom(event.target.value)}
+            className="h-8 w-[140px] text-xs"
+            aria-label="From date"
+          />
+          <span>to</span>
+          <Input
+            type="date"
+            value={to}
+            onChange={(event) => setTo(event.target.value)}
+            className="h-8 w-[140px] text-xs"
+            aria-label="To date"
+          />
         </div>
 
         {orders.loading ? (

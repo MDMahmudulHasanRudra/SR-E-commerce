@@ -302,14 +302,32 @@ public sealed class InventoryService
         return new PagedResult<StockMovementView>(items, page, pageSize, total);
     }
 
-    public async Task UpdateReorderSettingsAsync(Guid stockItemId, ReorderSettingsRequest request, CancellationToken ct = default)
+    public async Task UpdateReorderSettingsAsync(Guid warehouseId, Guid variantId, ReorderSettingsRequest request,
+        CancellationToken ct = default)
     {
-        var stock = await _db.StockItems.FirstOrDefaultAsync(s => s.Id == stockItemId, ct)
-            ?? throw new DomainException(DomainErrors.NotFound, "Stock record not found.");
         if (request.ReorderPoint < 0 || request.ReorderQuantity < 0)
             throw new DomainException(DomainErrors.Validation, "Reorder values cannot be negative.");
+        if (!await _db.Warehouses.AnyAsync(w => w.Id == warehouseId, ct))
+            throw new DomainException(DomainErrors.NotFound, "Warehouse not found.");
+        if (!await _db.ProductVariants.AnyAsync(v => v.Id == variantId, ct))
+            throw new DomainException(DomainErrors.NotFound, "Product variant not found.");
+
+        var stock = await _db.StockItems
+            .FirstOrDefaultAsync(s => s.WarehouseId == warehouseId && s.VariantId == variantId, ct);
+        if (stock is null)
+        {
+            stock = new StockItem
+            {
+                TenantId = _db.CurrentTenantId,
+                WorkspaceId = _db.CurrentWorkspaceId,
+                WarehouseId = warehouseId,
+                VariantId = variantId
+            };
+            _db.StockItems.Add(stock);
+        }
         stock.ReorderPoint = request.ReorderPoint;
         stock.ReorderQuantity = request.ReorderQuantity;
+        stock.UpdatedAtUtc = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
     }
 

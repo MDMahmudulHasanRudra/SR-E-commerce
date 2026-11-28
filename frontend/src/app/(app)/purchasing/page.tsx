@@ -109,6 +109,7 @@ export default function PurchasingPage() {
 
   const [supplierOpen, setSupplierOpen] = useState(false);
   const [supplierEditing, setSupplierEditing] = useState<string | null>(null);
+  const [supplierView, setSupplierView] = useState<Supplier | null>(null);
   const [supplierForm, setSupplierForm] = useState<SupplierForm>(emptySupplier);
   const [supplierBusy, setSupplierBusy] = useState(false);
   const [supplierDelete, setSupplierDelete] = useState<Supplier | null>(null);
@@ -148,6 +149,27 @@ export default function PurchasingPage() {
 
   const variants = useMemo(() => stock.data?.items ?? [], [stock.data]);
   const supplierList = suppliers.data ?? [];
+  const lowStockItems = useApi<StockRow[]>("/api/v1/inventory/low-stock");
+
+  function fillLowStockLines() {
+    const low = lowStockItems.data ?? [];
+    if (low.length === 0) {
+      push({ tone: "info", title: "No low-stock variants right now" });
+      return;
+    }
+    const unique = new Map<string, StockRow>();
+    low.forEach((row) => {
+      if (!unique.has(row.variantId)) unique.set(row.variantId, row);
+    });
+    setLines(
+      [...unique.values()].map((row) => ({
+        variantId: row.variantId,
+        quantityOrdered: String(Math.max(1, row.reorderQuantity || 10)),
+        unitCost: String(row.costPrice),
+      })),
+    );
+    push({ title: `Added ${unique.size} low-stock item(s)` });
+  }
 
   function resetPo() {
     setCreateForm({ supplierId: supplierList[0]?.id ?? "", expectedDate: "", taxTotal: "0", notes: "" });
@@ -552,7 +574,7 @@ export default function PurchasingPage() {
                 </THead>
                 <tbody>
                   {supplierList.map((supplier) => (
-                    <TR key={supplier.id}>
+                    <TR key={supplier.id} onClick={() => setSupplierView(supplier)}>
                       <TD>
                         <p className="text-[12.5px] font-medium text-ink">{supplier.name}</p>
                         <p className="mt-0.5 max-w-[220px] truncate text-[10.5px] text-muted">{supplier.address ?? "No address"}</p>
@@ -573,7 +595,7 @@ export default function PurchasingPage() {
                         </Badge>
                       </TD>
                       <TD align="right">
-                        <div className="flex justify-end gap-1">
+                        <div className="flex justify-end gap-1" onClick={(event) => event.stopPropagation()}>
                           <Button variant="ghost" size="sm" icon="edit" onClick={() => openSupplier(supplier)}>
                             Edit
                           </Button>
@@ -818,16 +840,21 @@ export default function PurchasingPage() {
           </div>
 
           <div>
-            <div className="mb-2 flex items-center justify-between">
+            <div className="mb-2 flex items-center justify-between gap-2">
               <p className="text-xs font-medium text-ink-soft">Line items</p>
-              <Button
-                variant="ghost"
-                size="sm"
-                icon="plus"
-                onClick={() => setLines([...lines, { variantId: "", quantityOrdered: "1", unitCost: "0" }])}
-              >
-                Add line
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="sm" icon="alert" onClick={fillLowStockLines}>
+                  Prefill low stock
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon="plus"
+                  onClick={() => setLines([...lines, { variantId: "", quantityOrdered: "1", unitCost: "0" }])}
+                >
+                  Add line
+                </Button>
+              </div>
             </div>
             <div className="space-y-2">
               {lines.map((line, index) => (
@@ -1127,6 +1154,79 @@ export default function PurchasingPage() {
             </Field>
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(supplierView)}
+        onClose={() => setSupplierView(null)}
+        title={supplierView?.name ?? "Supplier"}
+        description={supplierView?.contactName ?? "Supplier profile"}
+        size="lg"
+        footer={
+          supplierView ? (
+            <>
+              <Button variant="secondary" size="sm" onClick={() => setSupplierView(null)}>
+                Close
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon="wallet"
+                onClick={() => {
+                  const target = supplierView;
+                  setSupplierView(null);
+                  setPayForm({
+                    supplierId: target.id,
+                    purchaseOrderId: "",
+                    amount: "",
+                    method: "bank",
+                    reference: "",
+                    paidAt: "",
+                  });
+                  setPayOpen(true);
+                }}
+              >
+                Pay supplier
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                icon="plus"
+                onClick={() => {
+                  const target = supplierView;
+                  setSupplierView(null);
+                  setCreateForm({ supplierId: target.id, expectedDate: "", taxTotal: "0", notes: "" });
+                  setLines([{ variantId: "", quantityOrdered: "1", unitCost: "0" }]);
+                  setCreateOpen(true);
+                }}
+              >
+                New PO
+              </Button>
+            </>
+          ) : undefined
+        }
+      >
+        {supplierView && (
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border border-line bg-[#faf9f5] p-3">
+                <InfoRow label="Email" value={supplierView.email ?? "—"} />
+                <InfoRow label="Phone" value={supplierView.phone ?? "—"} />
+                <InfoRow label="Address" value={supplierView.address ?? "—"} />
+              </div>
+              <div className="rounded-lg border border-line bg-[#faf9f5] p-3">
+                <InfoRow label="Open POs" value={number(supplierView.openPurchaseOrders)} />
+                <InfoRow label="Total purchased" value={currency(supplierView.totalPurchased)} />
+                <InfoRow label="Status" value={supplierView.isActive ? "Active" : "Inactive"} />
+              </div>
+            </div>
+            {supplierView.notes && (
+              <p className="rounded-lg border border-line bg-[#faf9f5] p-3 text-xs text-muted">
+                {supplierView.notes}
+              </p>
+            )}
+          </div>
+        )}
       </Modal>
 
       <ConfirmModal

@@ -1,6 +1,11 @@
 "use client";
 
-import type { CustomerDetail } from "@/lib/types";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { api, query } from "@/lib/api";
+import { useDebounced } from "@/lib/hooks";
+import type { CustomerDetail, CustomerListItem } from "@/lib/types";
+import { Icon } from "@/components/icons";
 import { Field, Input, Select, Textarea } from "@/components/ui";
 
 export type CustomerFormValue = {
@@ -41,15 +46,66 @@ export function customerToForm(customer: CustomerDetail): CustomerFormValue {
 export function CustomerForm({
   value,
   onChange,
+  excludeCustomerId,
 }: {
   value: CustomerFormValue;
   onChange: (value: CustomerFormValue) => void;
+  excludeCustomerId?: string;
 }) {
   const set = <K extends keyof CustomerFormValue>(key: K, next: CustomerFormValue[K]) =>
     onChange({ ...value, [key]: next });
 
+  const debouncedEmail = useDebounced(value.email.trim(), 350);
+  const debouncedPhone = useDebounced(value.phone.trim(), 350);
+  const [duplicates, setDuplicates] = useState<CustomerListItem[]>([]);
+
+  useEffect(() => {
+    if (!debouncedEmail && !debouncedPhone) {
+      setDuplicates([]);
+      return;
+    }
+    let cancelled = false;
+    api<CustomerListItem[]>(
+      `/api/v1/customers/duplicates${query({
+        email: debouncedEmail || undefined,
+        phone: debouncedPhone || undefined,
+      })}`,
+    )
+      .then((rows) => {
+        if (cancelled) return;
+        setDuplicates(rows.filter((row) => row.id !== excludeCustomerId));
+      })
+      .catch(() => {
+        if (!cancelled) setDuplicates([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedEmail, debouncedPhone, excludeCustomerId]);
+
   return (
     <div className="space-y-3">
+      {duplicates.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11.5px] text-amber-900">
+          <p className="flex items-center gap-1.5 font-medium">
+            <Icon name="alert" size={14} className="text-amber-700" />
+            Possible duplicate customer(s) found in this workspace
+          </p>
+          <ul className="mt-1.5 space-y-1">
+            {duplicates.map((dup) => (
+              <li key={dup.id} className="flex items-center justify-between gap-2">
+                <span>
+                  {dup.displayName} ({dup.email ?? dup.phone ?? "No contact"})
+                </span>
+                <Link href={`/customers/${dup.id}`} className="font-medium text-brand hover:underline">
+                  Open profile
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="First name" required>
           <Input

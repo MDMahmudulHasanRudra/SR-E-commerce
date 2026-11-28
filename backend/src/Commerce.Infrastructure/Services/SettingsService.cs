@@ -14,6 +14,7 @@ public sealed record CompanySettingsView(Guid TenantId, string CompanyName, stri
     string ApiContractVersion, DateTime CreatedAtUtc);
 public sealed record UpdateCompanySettingsInput(string CompanyName, string WorkspaceName,
     string CurrencyCode, string TimeZone);
+public sealed record CreateWorkspaceInput(string Name, string CurrencyCode, string TimeZone);
 public sealed record TeamMemberView(Guid UserId, string Email, string FullName, string Role, bool IsActive,
     DateTime? LastLoginAtUtc, DateTime CreatedAtUtc);
 public sealed record CreateTeamMemberInput(string FullName, string Email, string Password, UserRole Role);
@@ -214,5 +215,62 @@ public sealed class SettingsService
         var tenant = await _db.Tenants.IgnoreQueryFilters().FirstAsync(t => t.Id == _db.CurrentTenantId, ct);
         return workspaces.Select(w => new CompanySettingsView(tenant.Id, tenant.Name, tenant.Slug, w.Id, w.Name,
             w.CurrencyCode, w.TimeZone, w.Status.ToString(), "v1", tenant.CreatedAtUtc)).ToList();
+    }
+
+    /// <summary>Creates a branch (workspace) in the current tenant and gives the caller access to it.</summary>
+    public async Task<CompanySettingsView> CreateWorkspaceAsync(CreateWorkspaceInput input, CancellationToken ct = default)
+    {
+        var name = input.Name?.Trim() ?? string.Empty;
+        if (name.Length < 2)
+            throw new DomainException(DomainErrors.Validation, "Workspace name is required.");
+        var currency = string.IsNullOrWhiteSpace(input.CurrencyCode)
+            ? "USD"
+            : input.CurrencyCode.Trim().ToUpperInvariant();
+        if (currency.Length != 3)
+            throw new DomainException(DomainErrors.Validation, "Use a three-letter currency code (for example USD).");
+
+        var workspace = new CommerceWorkspace
+        {
+            TenantId = _db.CurrentTenantId,
+            Name = name,
+            Slug = await UniqueWorkspaceSlugAsync(name, ct),
+            CurrencyCode = currency,
+            TimeZone = string.IsNullOrWhiteSpace(input.TimeZone) ? "UTC" : input.TimeZone.Trim(),
+            IsPrimary = false
+        };
+        _db.Workspaces.Add(workspace);
+        _db.Memberships.Add(new CommerceMembership
+        {
+            TenantId = _db.CurrentTenantId,
+            WorkspaceId = workspace.Id,
+            UserId = _tenant.UserId ?? throw new DomainException(DomainErrors.Unauthorized, "No signed-in user."),
+            Role = _tenant.Role ?? UserRole.Viewer,
+            IsActive = true
+        });
+        _db.Warehouses.Add(new Commerce.Domain.Inventory.Warehouse
+        {
+            TenantId = _db.CurrentTenantId,
+            WorkspaceId = workspace.Id,
+            Name = "Main Warehouse",
+            Code = "MAIN",
+            IsDefault = true
+        });
+        _audit.Record("settings.workspace_created", "Workspace", workspace.Id.ToString(), workspace.Name);
+        await _db.SaveChangesAsync(ct);
+
+        var tenant = await _db.Tenants.IgnoreQueryFilters().FirstAsync(t => t.Id == _db.CurrentTenantId, ct);
+        return new CompanySettingsView(tenant.Id, tenant.Name, tenant.Slug, workspace.Id, workspace.Name,
+            workspace.CurrencyCode, workspace.TimeZone, workspace.Status.ToString(), "v1", tenant.CreatedAtUtc);
+    }
+
+    private async Task<string> UniqueWorkspaceSlugAsync(string name, CancellationToken ct)
+    {
+        var baseSlug = AuthService.Slugify(name);
+        var slug = baseSlug;
+        var i = 1;
+        while (await _db.Workspaces.IgnoreQueryFilters()
+                   .AnyAsync(w => w.TenantId == _db.CurrentTenantId && w.Slug == slug, ct))
+            slug = $"{baseSlug}-{++i}";
+        return slug;
     }
 }

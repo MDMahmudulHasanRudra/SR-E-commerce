@@ -92,6 +92,11 @@ middleware and policies:
   rotates refresh tokens once on `401`, and normalises API errors.
 - Pages are client components using `useApi`/`useDebounced`. No server-side data
   fetching is performed; the API is the only source of truth.
+- `lib/permissions.ts` mirrors backend role policies; `lib/theme.tsx` holds the
+  theme preset, density, brand name and embedded-mode state; `lib/csv.ts` builds
+  product import templates and CSV exports.
+- `components/CommandPalette.tsx` searches products, orders and customers through
+  the same API and jumps to navigation routes (`⌘K` / `Ctrl+K`).
 - `next.config.ts` uses `output: "standalone"` for container builds.
 
 ## Request lifecycle (dashboard)

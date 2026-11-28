@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api, query, type Paged } from "@/lib/api";
-import { useApi, useDebounced } from "@/lib/hooks";
+import { errorMessage, useApi, useDebounced } from "@/lib/hooks";
 import type { StockMovement, StockReportRow, StockRow, Warehouse } from "@/lib/types";
 import { currency, dateTime, number, statusLabel } from "@/lib/format";
 import { Icon } from "@/components/icons";
@@ -12,6 +12,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  ConfirmModal,
   EmptyState,
   ErrorState,
   Field,
@@ -55,12 +56,17 @@ export default function InventoryPage() {
   const [lowOnly, setLowOnly] = useState(false);
   const [page, setPage] = useState(1);
   const [movementType, setMovementType] = useState("");
+  const [movementVariantId, setMovementVariantId] = useState("");
   const [movementPage, setMovementPage] = useState(1);
   const debouncedSearch = useDebounced(search);
 
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [warehouseOpen, setWarehouseOpen] = useState(false);
+  const [warehouseEditing, setWarehouseEditing] = useState<Warehouse | null>(null);
+  const [warehouseDelete, setWarehouseDelete] = useState<Warehouse | null>(null);
+  const [reorderTarget, setReorderTarget] = useState<StockRow | null>(null);
+  const [reorderForm, setReorderForm] = useState({ reorderPoint: "0", reorderQuantity: "0" });
   const [busy, setBusy] = useState(false);
 
   const [adjustForm, setAdjustForm] = useState({
@@ -100,7 +106,7 @@ export default function InventoryPage() {
 
   useEffect(() => {
     setMovementPage(1);
-  }, [movementType, warehouseId]);
+  }, [movementType, movementVariantId, warehouseId]);
 
   const stockPath = `/api/v1/inventory/stock${query({
     search: debouncedSearch,
@@ -114,6 +120,7 @@ export default function InventoryPage() {
   const warehouses = useApi<Warehouse[]>("/api/v1/warehouses");
   const movements = useApi<Paged<StockMovement>>(
     `/api/v1/inventory/movements${query({
+      variantId: movementVariantId,
       warehouseId,
       type: movementType,
       page: movementPage,
@@ -234,6 +241,22 @@ export default function InventoryPage() {
     }
   }
 
+  function openWarehouse(warehouse?: Warehouse) {
+    if (warehouse) {
+      setWarehouseEditing(warehouse);
+      setWarehouseForm({
+        name: warehouse.name,
+        code: warehouse.code,
+        address: warehouse.address ?? "",
+        isDefault: warehouse.isDefault,
+      });
+    } else {
+      setWarehouseEditing(null);
+      setWarehouseForm({ name: "", code: "", address: "", isDefault: false });
+    }
+    setWarehouseOpen(true);
+  }
+
   async function submitWarehouse() {
     if (!warehouseForm.name.trim() || !warehouseForm.code.trim()) {
       push({ tone: "error", title: "Warehouse name and code are required." });
@@ -241,8 +264,8 @@ export default function InventoryPage() {
     }
     setBusy(true);
     try {
-      await api("/api/v1/warehouses", {
-        method: "POST",
+      await api(warehouseEditing ? `/api/v1/warehouses/${warehouseEditing.id}` : "/api/v1/warehouses", {
+        method: warehouseEditing ? "PUT" : "POST",
         body: {
           name: warehouseForm.name.trim(),
           code: warehouseForm.code.trim().toUpperCase(),
@@ -250,12 +273,61 @@ export default function InventoryPage() {
           isDefault: warehouseForm.isDefault,
         },
       });
-      push({ title: "Warehouse created" });
+      push({ title: warehouseEditing ? "Warehouse updated" : "Warehouse created" });
       setWarehouseOpen(false);
+      setWarehouseEditing(null);
       setWarehouseForm({ name: "", code: "", address: "", isDefault: false });
       await warehouses.reload();
     } catch (cause) {
-      push({ tone: "error", title: "Could not create warehouse", description: cause instanceof Error ? cause.message : "Try again." });
+      push({ tone: "error", title: "Could not save warehouse", description: errorMessage(cause) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteWarehouse() {
+    if (!warehouseDelete) return;
+    setBusy(true);
+    try {
+      await api(`/api/v1/warehouses/${warehouseDelete.id}`, { method: "DELETE" });
+      push({ title: "Warehouse deleted" });
+      setWarehouseDelete(null);
+      await warehouses.reload();
+    } catch (cause) {
+      push({ tone: "error", title: "Could not delete warehouse", description: errorMessage(cause) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openReorder(row: StockRow) {
+    setReorderTarget(row);
+    setReorderForm({
+      reorderPoint: String(row.reorderPoint),
+      reorderQuantity: String(row.reorderQuantity),
+    });
+  }
+
+  async function submitReorder() {
+    if (!reorderTarget) return;
+    const reorderPoint = Math.max(0, Number(reorderForm.reorderPoint) || 0);
+    const reorderQuantity = Math.max(0, Number(reorderForm.reorderQuantity) || 0);
+    setBusy(true);
+    try {
+      await api("/api/v1/inventory/reorder", {
+        method: "PUT",
+        body: {
+          warehouseId: reorderTarget.warehouseId,
+          variantId: reorderTarget.variantId,
+          reorderPoint,
+          reorderQuantity,
+        },
+      });
+      push({ title: "Reorder thresholds updated" });
+      setReorderTarget(null);
+      await refreshAll();
+    } catch (cause) {
+      push({ tone: "error", title: "Could not update reorder settings", description: errorMessage(cause) });
     } finally {
       setBusy(false);
     }
@@ -274,7 +346,7 @@ export default function InventoryPage() {
         description="Stock levels, movements and warehouses — scoped to this workspace and tenant."
       >
         {canManage && (
-          <Button variant="secondary" icon="plus" onClick={() => setWarehouseOpen(true)}>
+          <Button variant="secondary" icon="plus" onClick={() => openWarehouse()}>
             New warehouse
           </Button>
         )}
@@ -446,11 +518,23 @@ export default function InventoryPage() {
                         {currency(row.onHand * row.costPrice, currencyCode)}
                       </TD>
                       <TD align="right">
-                        {canAdjust && (
-                          <Button variant="ghost" size="sm" onClick={() => openAdjust(row)}>
-                            Adjust
-                          </Button>
-                        )}
+                        <div className="flex justify-end gap-1">
+                          {canAdjust && (
+                            <Button variant="ghost" size="sm" onClick={() => openAdjust(row)}>
+                              Adjust
+                            </Button>
+                          )}
+                          {canManage && warehouses.data && warehouses.data.length > 1 && (
+                            <Button variant="ghost" size="sm" onClick={() => openTransfer(row)}>
+                              Transfer
+                            </Button>
+                          )}
+                          {canManage && (
+                            <Button variant="ghost" size="sm" onClick={() => openReorder(row)}>
+                              Reorder
+                            </Button>
+                          )}
+                        </div>
                       </TD>
                     </TR>
                   );
@@ -480,9 +564,21 @@ export default function InventoryPage() {
               className="w-[180px]"
             >
               <option value="">All movement types</option>
-              {["Adjustment", "TransferIn", "TransferOut", "PurchaseReceipt", "Sale", "Return"].map((value) => (
+              {["Adjustment", "TransferIn", "TransferOut", "PurchaseReceipt", "Sale", "Return", "Reservation", "Release"].map((value) => (
                 <option key={value} value={value}>
                   {statusLabel(value)}
+                </option>
+              ))}
+            </Select>
+            <Select
+              value={movementVariantId}
+              onChange={(event) => setMovementVariantId(event.target.value)}
+              className="w-[210px]"
+            >
+              <option value="">All variants</option>
+              {uniqueVariants.map((variant) => (
+                <option key={variant.variantId} value={variant.variantId}>
+                  {variant.productName} · {variant.sku}
                 </option>
               ))}
             </Select>
@@ -571,7 +667,26 @@ export default function InventoryPage() {
                 <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#cfe2d6] bg-brand-soft text-brand">
                   <Icon name="warehouse" size={17} />
                 </span>
-                {warehouse.isDefault && <Badge tone="brand">Default</Badge>}
+                <div className="flex items-center gap-1">
+                  {warehouse.isDefault && <Badge tone="brand">Default</Badge>}
+                  {canManage && (
+                    <>
+                      <Button variant="ghost" size="sm" icon="edit" onClick={() => openWarehouse(warehouse)}>
+                        Edit
+                      </Button>
+                      {!warehouse.isDefault && (
+                        <button
+                          type="button"
+                          aria-label={`Delete ${warehouse.name}`}
+                          onClick={() => setWarehouseDelete(warehouse)}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-rose-50 hover:text-rose-600"
+                        >
+                          <Icon name="trash" size={14} />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
               <h3 className="mt-3 text-[13px] font-semibold">{warehouse.name}</h3>
               <p className="mt-0.5 font-mono text-[10px] text-muted">{warehouse.code}</p>
@@ -776,16 +891,27 @@ export default function InventoryPage() {
 
       <Modal
         open={warehouseOpen}
-        onClose={() => setWarehouseOpen(false)}
-        title="New warehouse"
+        onClose={() => {
+          setWarehouseOpen(false);
+          setWarehouseEditing(null);
+        }}
+        title={warehouseEditing ? "Edit warehouse" : "New warehouse"}
         description="Warehouses hold stock items. Each workspace starts with a default location."
         footer={
           <>
-            <Button variant="secondary" size="sm" onClick={() => setWarehouseOpen(false)} disabled={busy}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setWarehouseOpen(false);
+                setWarehouseEditing(null);
+              }}
+              disabled={busy}
+            >
               Cancel
             </Button>
             <Button variant="primary" size="sm" onClick={submitWarehouse} loading={busy}>
-              Create warehouse
+              {warehouseEditing ? "Save changes" : "Create warehouse"}
             </Button>
           </>
         }
@@ -825,6 +951,53 @@ export default function InventoryPage() {
           </label>
         </div>
       </Modal>
+
+      <Modal
+        open={Boolean(reorderTarget)}
+        onClose={() => setReorderTarget(null)}
+        title="Reorder settings"
+        description={reorderTarget ? `${reorderTarget.productName} · ${reorderTarget.sku} (${reorderTarget.warehouseName})` : undefined}
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setReorderTarget(null)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button variant="primary" size="sm" onClick={submitReorder} loading={busy}>
+              Save thresholds
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <Field label="Reorder point" hint="Low-stock alerts trigger when available units fall to or below this number.">
+            <Input
+              type="number"
+              min="0"
+              value={reorderForm.reorderPoint}
+              onChange={(event) => setReorderForm({ ...reorderForm, reorderPoint: event.target.value })}
+            />
+          </Field>
+          <Field label="Suggested reorder quantity" hint="Default quantity pre-filled when replenishing via purchase orders.">
+            <Input
+              type="number"
+              min="0"
+              value={reorderForm.reorderQuantity}
+              onChange={(event) => setReorderForm({ ...reorderForm, reorderQuantity: event.target.value })}
+            />
+          </Field>
+        </div>
+      </Modal>
+
+      <ConfirmModal
+        open={Boolean(warehouseDelete)}
+        onClose={() => setWarehouseDelete(null)}
+        onConfirm={() => void deleteWarehouse()}
+        title={`Delete ${warehouseDelete?.name ?? "this warehouse"}?`}
+        description="All stock in this warehouse must be transferred or adjusted to zero before it can be removed."
+        confirmLabel="Delete warehouse"
+        loading={busy}
+      />
 
       {lowStockRows.length > 0 && tab === "stock" && !lowOnly && (
         <Card>

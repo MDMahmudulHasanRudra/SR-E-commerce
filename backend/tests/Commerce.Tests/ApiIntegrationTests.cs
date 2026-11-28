@@ -427,4 +427,165 @@ public sealed class ApiIntegrationTests
         var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("SSO_NOT_CONFIGURED", payload.GetProperty("error").GetProperty("code").GetString());
     }
+
+    [Fact]
+    public async Task Password_change_revokes_the_old_credential()
+    {
+        using var factory = new CommerceApiFactory();
+        using var client = factory.CreateClient();
+        var login = await client.LoginAsync();
+        client.Authorized(login.AccessToken);
+
+        var wrong = await client.PostAsJsonAsync("/api/v1/auth/change-password",
+            new { currentPassword = "not-the-password", newPassword = "NewPassword123!" });
+        Assert.Equal(HttpStatusCode.Unauthorized, wrong.StatusCode);
+
+        var changed = await client.PostAsJsonAsync("/api/v1/auth/change-password",
+            new { currentPassword = CommerceApiFactory.DemoPassword, newPassword = "NewPassword123!" });
+        Assert.Equal(HttpStatusCode.NoContent, changed.StatusCode);
+
+        using var oldClient = factory.CreateClient();
+        var oldLogin = await oldClient.PostAsJsonAsync("/api/v1/auth/login",
+            new { email = CommerceApiFactory.DemoEmail, password = CommerceApiFactory.DemoPassword });
+        Assert.Equal(HttpStatusCode.Unauthorized, oldLogin.StatusCode);
+
+        using var newClient = factory.CreateClient();
+        var newLogin = await newClient.LoginAsync(CommerceApiFactory.DemoEmail, "NewPassword123!");
+        Assert.Equal("Owner", newLogin.Role);
+    }
+
+    [Fact]
+    public async Task Branch_workspace_can_be_created_and_switched_to()
+    {
+        using var factory = new CommerceApiFactory();
+        using var client = factory.CreateClient();
+        var login = await client.LoginAsync();
+        client.Authorized(login.AccessToken);
+
+        using var created = await client.PostAsJsonAsync("/api/v1/settings/workspaces",
+            new { name = "Downtown Branch", currencyCode = "eur", timeZone = "Europe/Berlin" });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var workspace = await created.Content.ReadFromJsonAsync<JsonElement>();
+        var workspaceId = workspace.GetProperty("workspaceId").GetGuid();
+        Assert.Equal("Downtown Branch", workspace.GetProperty("workspaceName").GetString());
+        Assert.Equal("EUR", workspace.GetProperty("currencyCode").GetString());
+
+        var list = await client.GetFromJsonAsync<JsonElement>("/api/v1/settings/workspaces");
+        Assert.Contains(list.EnumerateArray(), w => w.GetProperty("workspaceId").GetGuid() == workspaceId);
+
+        using var switched = await client.PostAsJsonAsync("/api/v1/auth/switch-workspace",
+            new { workspaceId });
+        Assert.Equal(HttpStatusCode.OK, switched.StatusCode);
+        var session = await switched.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Downtown Branch", session.GetProperty("user").GetProperty("workspaceName").GetString());
+        Assert.Equal("EUR", session.GetProperty("user").GetProperty("currencyCode").GetString());
+
+        client.Authorized(session.GetProperty("accessToken").GetString()!);
+        var warehouses = await client.GetFromJsonAsync<JsonElement>("/api/v1/warehouses");
+        Assert.Contains(warehouses.EnumerateArray(),
+            w => w.GetProperty("name").GetString() == "Main Warehouse");
+    }
+
+    [Fact]
+    public async Task Reorder_thresholds_are_saved_for_a_variant()
+    {
+        using var factory = new CommerceApiFactory();
+        using var client = factory.CreateClient();
+        var login = await client.LoginAsync();
+        client.Authorized(login.AccessToken);
+
+        var stock = await client.GetFromJsonAsync<JsonElement>("/api/v1/inventory/stock?pageSize=1");
+        var row = stock.GetProperty("items")[0];
+        var warehouseId = row.GetProperty("warehouseId").GetGuid();
+        var variantId = row.GetProperty("variantId").GetGuid();
+
+        var saved = await client.PutAsJsonAsync("/api/v1/inventory/reorder",
+            new { warehouseId, variantId, reorderPoint = 7, reorderQuantity = 21 });
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+
+        var refreshed = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/inventory/stock?warehouseId={warehouseId}&pageSize=200");
+        var updated = refreshed.GetProperty("items").EnumerateArray()
+            .First(x => x.GetProperty("variantId").GetGuid() == variantId);
+        Assert.Equal(7, updated.GetProperty("reorderPoint").GetInt32());
+        Assert.Equal(21, updated.GetProperty("reorderQuantity").GetInt32());
+    }
+
+    [Fact]
+    public async Task Price_history_records_variant_price_changes()
+    {
+        using var factory = new CommerceApiFactory();
+        using var client = factory.CreateClient();
+        var login = await client.LoginAsync();
+        client.Authorized(login.AccessToken);
+
+        var sku = $"HIST-{Guid.NewGuid():N}"[..12];
+        var created = await client.PostAsJsonAsync("/api/v1/products", new
+        {
+            name = "History Widget",
+            sku,
+            shortDescription = (string?)null,
+            description = (string?)null,
+            categoryId = (Guid?)null,
+            brandId = (Guid?)null,
+            status = "Active",
+            costPrice = 4m,
+            basePrice = 10m,
+            compareAtPrice = (decimal?)null,
+            taxRate = 0m,
+            isFeatured = false,
+            tags = (string?)null,
+            seoTitle = (string?)null,
+            seoDescription = (string?)null,
+            variants = new[]
+            {
+                new
+                {
+                    id = (Guid?)null, name = "Default", sku = $"{sku}-D", attributesJson = (string?)null,
+                    costPrice = 4m, price = 10m, isActive = true, isDefault = true
+                }
+            },
+            images = Array.Empty<string>()
+        });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var product = await created.Content.ReadFromJsonAsync<JsonElement>();
+        var productId = product.GetProperty("id").GetGuid();
+        var variantId = product.GetProperty("variants")[0].GetProperty("id").GetGuid();
+
+        var updated = await client.PutAsJsonAsync($"/api/v1/products/{productId}", new
+        {
+            name = "History Widget",
+            sku,
+            shortDescription = (string?)null,
+            description = (string?)null,
+            categoryId = (Guid?)null,
+            brandId = (Guid?)null,
+            status = "Active",
+            costPrice = 4m,
+            basePrice = 10m,
+            compareAtPrice = (decimal?)null,
+            taxRate = 0m,
+            isFeatured = false,
+            tags = (string?)null,
+            seoTitle = (string?)null,
+            seoDescription = (string?)null,
+            variants = new[]
+            {
+                new
+                {
+                    id = (Guid?)variantId, name = "Default", sku = $"{sku}-D", attributesJson = (string?)null,
+                    costPrice = 4m, price = 12m, isActive = true, isDefault = true
+                }
+            },
+            images = Array.Empty<string>()
+        });
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+
+        var history = await client.GetFromJsonAsync<JsonElement>($"/api/v1/products/{productId}/price-history");
+        var entry = Assert.Single(history.EnumerateArray());
+        Assert.Equal(variantId, entry.GetProperty("variantId").GetGuid());
+        Assert.Equal(10m, entry.GetProperty("oldPrice").GetDecimal());
+        Assert.Equal(12m, entry.GetProperty("newPrice").GetDecimal());
+        Assert.Equal("Product update", entry.GetProperty("reason").GetString());
+    }
 }

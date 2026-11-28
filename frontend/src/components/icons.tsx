@@ -42,7 +42,16 @@ export type IconName =
   | "shield"
   | "copy"
   | "chevronLeft"
-  | "calendar";
+  | "calendar"
+  | "printer"
+  | "palette"
+  | "key"
+  | "building"
+  | "sliders"
+  | "lock"
+  | "info"
+  | "folder"
+  | "award";
 
 const paths: Record<IconName, React.ReactNode> = {
   logo: (
@@ -223,6 +232,60 @@ const paths: Record<IconName, React.ReactNode> = {
     <>
       <rect x="3" y="5" width="18" height="16" rx="2" />
       <path d="M8 3v4M16 3v4M3 10h18" />
+    </>
+  ),
+  printer: (
+    <>
+      <path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+      <rect x="6" y="14" width="12" height="7" />
+    </>
+  ),
+  palette: (
+    <>
+      <circle cx="13.5" cy="6.5" r="0.8" fill="currentColor" />
+      <circle cx="17.5" cy="10.5" r="0.8" fill="currentColor" />
+      <circle cx="8.5" cy="7.5" r="0.8" fill="currentColor" />
+      <circle cx="6.5" cy="12.5" r="0.8" fill="currentColor" />
+      <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.6-.7 1.6-1.6 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1 0-.9.7-1.6 1.6-1.6H16c3.3 0 6-2.7 6-6 0-4.9-4.5-8.6-10-8.6Z" />
+    </>
+  ),
+  key: (
+    <>
+      <circle cx="7.5" cy="15.5" r="4.5" />
+      <path d="m10.7 12.3 8.8-8.8M16 7l2.5 2.5M18.5 4.5 21 7" />
+    </>
+  ),
+  building: (
+    <>
+      <path d="M3 21h18M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16M9 7h2M13 7h2M9 11h2M13 11h2M9 15h2M13 15h2" />
+    </>
+  ),
+  sliders: (
+    <>
+      <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" />
+    </>
+  ),
+  lock: (
+    <>
+      <rect x="4" y="11" width="16" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+    </>
+  ),
+  info: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 16v-4M12 8h.01" />
+    </>
+  ),
+  folder: (
+    <>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+    </>
+  ),
+  award: (
+    <>
+      <circle cx="12" cy="9" r="5" />
+      <path d="M9.2 13.3 8 21l4-2 4 2-1.2-7.7" />
     </>
   ),
 };

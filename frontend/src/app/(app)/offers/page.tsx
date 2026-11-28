@@ -1,20 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, type Paged } from "@/lib/api";
 import { errorMessage, useApi } from "@/lib/hooks";
-import type { Category, Coupon, Offer, OfferBundle, ProductListItem } from "@/lib/types";
+import type { Category, Coupon, Offer, OfferBundle, PriceQuoteResponse, ProductListItem, StockRow } from "@/lib/types";
 import { currency, date, number, percent } from "@/lib/format";
 import { Icon } from "@/components/icons";
 import {
   Badge,
   Button,
   Card,
+  CardBody,
   CardHeader,
   ConfirmModal,
   EmptyState,
   ErrorState,
   Field,
+  InfoRow,
   Input,
   Modal,
   PageHeader,
@@ -91,7 +93,46 @@ export default function OffersPage() {
   const { data, loading, error, reload } = useApi<OfferBundle>("/api/v1/pricing/offers");
   const products = useApi<Paged<ProductListItem>>("/api/v1/products?pageSize=200");
   const categories = useApi<Category[]>("/api/v1/categories");
+  const stock = useApi<Paged<StockRow>>("/api/v1/inventory/stock?pageSize=200");
   const [tab, setTab] = useState("offers");
+
+  const [quoteVariantId, setQuoteVariantId] = useState("");
+  const [quoteQty, setQuoteQty] = useState("1");
+  const [quoteCoupon, setQuoteCoupon] = useState("");
+  const [quoteResult, setQuoteResult] = useState<PriceQuoteResponse | null>(null);
+  const [quoteBusy, setQuoteBusy] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("tab") === "quote") setTab("quote");
+    if (params.get("variantId")) setQuoteVariantId(params.get("variantId") ?? "");
+  }, []);
+
+  async function runQuote() {
+    if (!quoteVariantId) {
+      push({ tone: "error", title: "Select a product variant" });
+      return;
+    }
+    setQuoteBusy(true);
+    setQuoteError(null);
+    try {
+      const res = await api<PriceQuoteResponse>("/api/v1/pricing/quote", {
+        method: "POST",
+        body: {
+          variantId: quoteVariantId,
+          quantity: Math.max(1, Math.floor(Number(quoteQty) || 1)),
+          couponCode: quoteCoupon.trim() || null,
+        },
+      });
+      setQuoteResult(res);
+    } catch (cause) {
+      setQuoteResult(null);
+      setQuoteError(errorMessage(cause));
+    } finally {
+      setQuoteBusy(false);
+    }
+  }
 
   const [offerOpen, setOfferOpen] = useState(false);
   const [offerEditing, setOfferEditing] = useState<string | null>(null);
@@ -305,6 +346,7 @@ export default function OffersPage() {
             tabs={[
               { value: "offers", label: "Offers", count: total },
               { value: "coupons", label: "Coupons", count: coupons },
+              { value: "quote", label: "Price calculator" },
             ]}
           />
         </div>
@@ -313,6 +355,113 @@ export default function OffersPage() {
           <TableSkeleton rows={6} columns={6} />
         ) : error ? (
           <ErrorState message={error.message} onRetry={reload} />
+        ) : tab === "quote" ? (
+          <CardBody className="grid gap-5 lg:grid-cols-[1.2fr_1fr]">
+            <div className="space-y-4">
+              <Field label="Product variant" required>
+                <Select value={quoteVariantId} onChange={(event) => setQuoteVariantId(event.target.value)}>
+                  <option value="">Choose a variant…</option>
+                  {(stock.data?.items ?? []).map((row) => (
+                    <option key={`${row.variantId}-${row.warehouseId}`} value={row.variantId}>
+                      {row.productName} · {row.variantName} ({row.sku}) — {currency(row.price)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Quantity" required>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={quoteQty}
+                    onChange={(event) => setQuoteQty(event.target.value)}
+                  />
+                </Field>
+                <Field label="Coupon code" hint="Optional order-level promo code.">
+                  <Input
+                    value={quoteCoupon}
+                    onChange={(event) => setQuoteCoupon(event.target.value.toUpperCase())}
+                    placeholder="WELCOME10"
+                    className="font-mono text-xs"
+                  />
+                </Field>
+              </div>
+              {quoteError && (
+                <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11.5px] text-rose-700">
+                  {quoteError}
+                </p>
+              )}
+              <Button variant="primary" icon="sparkle" loading={quoteBusy} onClick={() => void runQuote()}>
+                Calculate server price
+              </Button>
+            </div>
+
+            <div className="rounded-xl border border-line bg-[#faf9f5] p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">
+                Effective price breakdown
+              </p>
+              {!quoteResult ? (
+                <p className="mt-4 text-xs leading-relaxed text-muted">
+                  Run a quote to inspect how live product/category offers and coupon codes combine on the server.
+                </p>
+              ) : (
+                <div className="mt-3 divide-y divide-[#efede5]">
+                  <InfoRow
+                    label="List unit price"
+                    value={currency(quoteResult.quote.listPrice, quoteResult.quote.currencyCode)}
+                  />
+                  <InfoRow
+                    label="Applied offer"
+                    value={
+                      quoteResult.quote.offerName ? (
+                        <Badge tone="emerald">
+                          {quoteResult.quote.offerName} (−{currency(quoteResult.quote.offerDiscount, quoteResult.quote.currencyCode)})
+                        </Badge>
+                      ) : (
+                        "None"
+                      )
+                    }
+                  />
+                  <InfoRow
+                    label="Effective unit price"
+                    value={currency(quoteResult.quote.unitPrice, quoteResult.quote.currencyCode)}
+                  />
+                  <InfoRow
+                    label={`Line total (${Math.max(1, Number(quoteQty) || 1)}×)`}
+                    value={currency(
+                      quoteResult.quote.unitPrice * Math.max(1, Math.floor(Number(quoteQty) || 1)),
+                      quoteResult.quote.currencyCode,
+                    )}
+                  />
+                  {quoteResult.coupon && (
+                    <InfoRow
+                      label={`Coupon (${quoteResult.coupon.code})`}
+                      value={
+                        <span className="text-violet-700">
+                          −{currency(quoteResult.coupon.discountAmount, quoteResult.quote.currencyCode)}
+                        </span>
+                      }
+                    />
+                  )}
+                  <InfoRow
+                    label="Quoted subtotal"
+                    value={
+                      <span className="text-sm font-semibold text-ink">
+                        {currency(
+                          Math.max(
+                            0,
+                            quoteResult.quote.unitPrice * Math.max(1, Math.floor(Number(quoteQty) || 1)) -
+                              (quoteResult.coupon?.discountAmount ?? 0),
+                          ),
+                          quoteResult.quote.currencyCode,
+                        )}
+                      </span>
+                    }
+                  />
+                </div>
+              )}
+            </div>
+          </CardBody>
         ) : tab === "offers" ? (
           (data?.all.length ?? 0) === 0 ? (
             <EmptyState

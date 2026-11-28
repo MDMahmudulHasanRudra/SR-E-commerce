@@ -23,6 +23,8 @@ public sealed record RegisterRequest(
 
 public sealed record LoginRequest(string Email, string Password);
 
+public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
+
 public sealed record AuthenticatedUser(
     Guid UserId,
     Guid TenantId,
@@ -46,13 +48,16 @@ public sealed class AuthService
     private readonly ITenantContext _tenant;
     private readonly AuthOptions _options;
     private readonly DemoDataSeeder _demo;
+    private readonly AuditService _audit;
 
-    public AuthService(CommerceDbContext db, ITenantContext tenant, IOptions<AuthOptions> options, DemoDataSeeder demo)
+    public AuthService(CommerceDbContext db, ITenantContext tenant, IOptions<AuthOptions> options, DemoDataSeeder demo,
+        AuditService audit)
     {
         _db = db;
         _tenant = tenant;
         _options = options.Value;
         _demo = demo;
+        _audit = audit;
     }
 
     public async Task<AuthResult> RegisterAsync(RegisterRequest request, CancellationToken ct = default)
@@ -183,6 +188,36 @@ public sealed class AuthService
             tenant.Name, workspace.Name, membership.Role.ToString(), workspace.CurrencyCode, workspace.TimeZone,
             RolePermissions.For(membership.Role));
         return new AuthResult(authUser, refresh.Token, refresh.ExpiresAtUtc);
+    }
+
+    public async Task ChangePasswordAsync(Guid userId, ChangePasswordRequest request, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.CurrentPassword))
+            throw new DomainException(DomainErrors.Validation, "Current password is required.");
+        if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 8)
+            throw new DomainException(DomainErrors.Validation, "New password must be at least 8 characters.");
+        if (request.NewPassword == request.CurrentPassword)
+            throw new DomainException(DomainErrors.Validation, "Choose a password different from the current one.");
+
+        var user = await _db.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Id == userId, ct)
+            ?? throw new DomainException(DomainErrors.NotFound, "Account not found.");
+        if (!user.IsActive)
+            throw new DomainException(DomainErrors.Forbidden, "This account is inactive.");
+        if (!PasswordHasher.Verify(request.CurrentPassword, user.PasswordHash))
+            throw new DomainException(DomainErrors.Unauthorized, "Current password is incorrect.");
+
+        user.PasswordHash = PasswordHasher.Hash(request.NewPassword);
+        user.UpdatedAtUtc = DateTime.UtcNow;
+
+        // Rotating the credential ends every existing session; the client keeps its short-lived
+        // access token but cannot refresh it.
+        var tokens = await _db.RefreshTokens.IgnoreQueryFilters()
+            .Where(t => t.UserId == userId && t.RevokedAtUtc == null)
+            .ToListAsync(ct);
+        foreach (var token in tokens) token.RevokedAtUtc = DateTime.UtcNow;
+
+        _audit.Record("auth.password_changed", "User", userId.ToString());
+        await _db.SaveChangesAsync(ct);
     }
 
     public async Task<AuthResult> RefreshAsync(string rawToken, CancellationToken ct = default)

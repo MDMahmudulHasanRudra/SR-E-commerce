@@ -8,6 +8,7 @@ import { errorMessage, useApi } from "@/lib/hooks";
 import type { CustomerDetail } from "@/lib/types";
 import { currency, date, dateTime, number, relative } from "@/lib/format";
 import { customerToForm, CustomerForm, customerPayload, type CustomerFormValue } from "@/components/CustomerForm";
+import { NewOrderModal } from "@/components/NewOrderModal";
 import { Icon } from "@/components/icons";
 import {
   Avatar,
@@ -79,6 +80,7 @@ export default function CustomerDetailPage() {
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [newOrderOpen, setNewOrderOpen] = useState(false);
 
   if (loading) {
     return (
@@ -145,11 +147,11 @@ export default function CustomerDetailPage() {
     }
     setAddressBusy(true);
     try {
-      const updated = await api<CustomerDetail>(`/api/v1/customers/${data.id}/addresses`, {
+      await api(`/api/v1/customers/${data.id}/addresses`, {
         method: "POST",
         body: addressForm,
       });
-      setData(updated);
+      await reload();
       push({ title: "Address added" });
       setAddressOpen(false);
       setAddressForm(emptyAddress);
@@ -246,12 +248,23 @@ export default function CustomerDetailPage() {
         >
           {data.isBusiness && <Badge tone="blue">Business</Badge>}
           {data.externalSource && <Badge tone="brand">{data.externalSource}</Badge>}
+          <Button variant="primary" icon="plus" onClick={() => setNewOrderOpen(true)}>
+            New order
+          </Button>
           <Button variant="secondary" icon="edit" onClick={openEdit}>
             Edit
           </Button>
-          <Button variant="secondary" icon="mail" disabled={!data.email}>
-            Email
-          </Button>
+          {data.email ? (
+            <a href={`mailto:${data.email}`}>
+              <Button variant="secondary" icon="mail">
+                Email
+              </Button>
+            </a>
+          ) : (
+            <Button variant="secondary" icon="mail" disabled>
+              Email
+            </Button>
+          )}
           <Button variant="danger" icon="trash" onClick={() => setDeleteOpen(true)}>
             Delete
           </Button>
@@ -516,7 +529,7 @@ export default function CustomerDetailPage() {
           </>
         }
       >
-        {form && <CustomerForm value={form} onChange={setForm} />}
+        {form && <CustomerForm value={form} onChange={setForm} excludeCustomerId={data.id} />}
       </Modal>
 
       <Modal
@@ -660,6 +673,16 @@ export default function CustomerDetailPage() {
         description="The customer record is removed. Historical orders remain for accounting and reporting."
         confirmLabel="Delete customer"
         loading={deleteBusy}
+      />
+
+      <NewOrderModal
+        open={newOrderOpen}
+        onClose={() => setNewOrderOpen(false)}
+        initialCustomerId={data.id}
+        onCreated={(order) => {
+          setNewOrderOpen(false);
+          router.push(`/orders/${order.id}`);
+        }}
       />
 
       <div className="flex items-center gap-2 text-[10.5px] text-muted">

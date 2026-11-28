@@ -59,6 +59,8 @@ public sealed record CategoryView(Guid Id, string Name, string Slug, Guid? Paren
 public sealed record BrandInput(string Name, string? LogoUrl);
 public sealed record BrandView(Guid Id, string Name, string Slug, string? LogoUrl, int ProductCount);
 public sealed record CsvImportResult(int Created, int Updated, int Skipped, IReadOnlyList<string> Errors);
+public sealed record PriceChangeView(Guid VariantId, string VariantName, string Sku, decimal OldPrice,
+    decimal NewPrice, string? Reason, string? ChangedBy, DateTime ChangedAtUtc);
 
 public sealed class CatalogService
 {
@@ -142,6 +144,40 @@ public sealed class CatalogService
         var p = await _db.Products.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted, ct)
             ?? throw new DomainException(DomainErrors.NotFound, "Product not found.");
         return await BuildViewAsync(p, ct);
+    }
+
+    /// <summary>Variant price changes recorded whenever a product update alters a variant price.</summary>
+    public async Task<IReadOnlyList<PriceChangeView>> GetPriceHistoryAsync(Guid productId, CancellationToken ct = default)
+    {
+        _ = await _db.Products.AsNoTracking().FirstOrDefaultAsync(p => p.Id == productId && !p.IsDeleted, ct)
+            ?? throw new DomainException(DomainErrors.NotFound, "Product not found.");
+
+        var variants = await _db.ProductVariants.AsNoTracking()
+            .Where(v => v.ProductId == productId)
+            .Select(v => new { v.Id, v.Name, v.Sku })
+            .ToListAsync(ct);
+        if (variants.Count == 0) return [];
+
+        var variantIds = variants.Select(v => v.Id).ToList();
+        var changes = await _db.PriceChanges.AsNoTracking()
+            .Where(c => variantIds.Contains(c.VariantId))
+            .OrderByDescending(c => c.CreatedAtUtc)
+            .Take(200)
+            .ToListAsync(ct);
+
+        var userIds = changes.Where(c => c.ChangedByUserId != null)
+            .Select(c => c.ChangedByUserId!.Value).Distinct().ToList();
+        var users = userIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _db.Users.IgnoreQueryFilters().Where(u => userIds.Contains(u.Id))
+                .ToDictionaryAsync(u => u.Id, u => u.FullName, ct);
+
+        return changes.Select(c =>
+        {
+            var variant = variants.First(v => v.Id == c.VariantId);
+            return new PriceChangeView(c.VariantId, variant.Name, variant.Sku, c.OldPrice, c.NewPrice, c.Reason,
+                c.ChangedByUserId is { } userId ? users.GetValueOrDefault(userId) : null, c.CreatedAtUtc);
+        }).ToList();
     }
 
     public async Task<ProductView> CreateProductAsync(ProductInput input, CancellationToken ct = default)
@@ -288,7 +324,7 @@ public sealed class CatalogService
                         OldPrice = current.Price,
                         NewPrice = v.Price,
                         Reason = "Product update",
-                        ChangedByUserId = _db.CurrentTenantId == Guid.Empty ? null : null
+                        ChangedByUserId = null
                     });
                 current.Name = v.Name;
                 current.Sku = variantSku;

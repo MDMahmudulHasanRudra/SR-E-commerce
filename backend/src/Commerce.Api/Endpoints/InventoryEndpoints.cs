@@ -3,6 +3,8 @@ using Commerce.Infrastructure.Services;
 
 namespace Commerce.Api.Endpoints;
 
+public sealed record ReorderStockRequest(Guid WarehouseId, Guid VariantId, int ReorderPoint, int ReorderQuantity);
+
 public static class InventoryEndpoints
 {
     public static void MapInventoryEndpoints(this IEndpointRouteBuilder app)
@@ -37,6 +39,13 @@ public static class InventoryEndpoints
         {
             await inventory.TransferAsync(request, ct);
             return Results.Ok(new { transferred = true });
+        }).RequireAuthorization("Manager");
+
+        stock.MapPut("/reorder", async (ReorderStockRequest request, InventoryService inventory, CancellationToken ct) =>
+        {
+            await inventory.UpdateReorderSettingsAsync(request.WarehouseId, request.VariantId,
+                new ReorderSettingsRequest(request.ReorderPoint, request.ReorderQuantity), ct);
+            return Results.Ok(new { updated = true });
         }).RequireAuthorization("Manager");
 
         stock.MapGet("/movements", async (Guid? variantId, Guid? warehouseId, StockMovementType? type,

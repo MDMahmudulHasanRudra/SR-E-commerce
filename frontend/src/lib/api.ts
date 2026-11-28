@@ -135,6 +135,25 @@ export async function login(email: string, password: string): Promise<Session> {
   return (await response.json()) as Session;
 }
 
+export type RegisterPayload = {
+  companyName: string;
+  fullName: string;
+  email: string;
+  password: string;
+  workspaceName?: string;
+  currency?: string;
+  seedDemoData?: boolean;
+};
+
+export async function register(payload: RegisterPayload): Promise<Session> {
+  const response = await rawRequest("/api/v1/auth/register", {
+    method: "POST",
+    body: payload,
+  });
+  if (!response.ok) throw await parseError(response);
+  return (await response.json()) as Session;
+}
+
 export async function switchWorkspace(workspaceId: string): Promise<Session> {
   const response = await api<Session>("/api/v1/auth/switch-workspace", {
     method: "POST",

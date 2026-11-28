@@ -36,6 +36,9 @@ public static class CatalogEndpoints
         products.MapGet("/{id:guid}", async (Guid id, CatalogService catalog, CancellationToken ct) =>
             Results.Ok(await catalog.GetProductAsync(id, ct))).RequireAuthorization("Member");
 
+        products.MapGet("/{id:guid}/price-history", async (Guid id, CatalogService catalog, CancellationToken ct) =>
+            Results.Ok(await catalog.GetPriceHistoryAsync(id, ct))).RequireAuthorization("Member");
+
         products.MapPost("", async (ProductInput input, CatalogService catalog, CancellationToken ct) =>
         {
             var product = await catalog.CreateProductAsync(input, ct);

@@ -17,6 +17,10 @@ public static class SettingsEndpoints
         settings.MapGet("/workspaces", async (SettingsService service, CancellationToken ct) =>
             Results.Ok(await service.ListWorkspacesAsync(ct))).RequireAuthorization("Member");
 
+        settings.MapPost("/workspaces", async (CreateWorkspaceInput input, SettingsService service, CancellationToken ct) =>
+            Results.Created("/api/v1/settings/workspaces", await service.CreateWorkspaceAsync(input, ct)))
+            .RequireAuthorization("Admin");
+
         settings.MapGet("/team", async (SettingsService service, CancellationToken ct) =>
             Results.Ok(await service.ListTeamAsync(ct))).RequireAuthorization("Member");
 

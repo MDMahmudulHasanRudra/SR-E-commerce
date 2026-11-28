@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import { Icon } from "@/components/icons";
@@ -208,6 +209,13 @@ export default function LoginPage() {
                 {loading ? "Signing in…" : "Sign in"}
               </Button>
             </form>
+
+            <p className="mt-4 text-center text-xs text-muted">
+              New business?{" "}
+              <Link href="/register" className="font-medium text-brand hover:underline">
+                Create a tenant workspace
+              </Link>
+            </p>
 
             {host ? (
               <div className="mt-4">

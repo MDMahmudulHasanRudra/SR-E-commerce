@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, download, query, type Paged } from "@/lib/api";
 import { useApi, useDebounced } from "@/lib/hooks";
-import type { Brand, Category, ProductListItem, StockRow } from "@/lib/types";
+import type { Brand, Category, ImportResult, ProductListItem, StockRow } from "@/lib/types";
+import { PRODUCT_CSV_HEADERS, PRODUCT_CSV_SAMPLE_ROWS, downloadCsvRows } from "@/lib/csv";
 import { currency, number } from "@/lib/format";
 import { Icon } from "@/components/icons";
 import {
@@ -14,6 +15,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  Modal,
   PageHeader,
   Pagination,
   SearchInput,
@@ -30,8 +32,6 @@ import {
 } from "@/components/ui";
 import { ProgressBar } from "@/components/charts";
 
-type ImportResult = { created: number; updated: number; skipped: number; errors: string[] };
-
 export default function ProductsPage() {
   const router = useRouter();
   const { push } = useToast();
@@ -39,10 +39,12 @@ export default function ProductsPage() {
   const [category, setCategory] = useState("");
   const [brand, setBrand] = useState("");
   const [status, setStatus] = useState("");
+  const [lowOnly, setLowOnly] = useState(false);
   const [sort, setSort] = useState("newest");
   const [page, setPage] = useState(1);
   const [view, setView] = useState<"table" | "grid">("table");
   const [importing, setImporting] = useState(false);
+  const [importHelpOpen, setImportHelpOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const debouncedSearch = useDebounced(search);
 
@@ -50,17 +52,19 @@ export default function ProductsPage() {
     const params = new URLSearchParams(window.location.search);
     const term = params.get("search");
     if (term) setSearch(term);
+    if (params.get("lowStock") === "1") setLowOnly(true);
   }, []);
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, category, brand, status, sort]);
+  }, [debouncedSearch, category, brand, status, lowOnly, sort]);
 
   const listPath = `/api/v1/products${query({
     search: debouncedSearch,
     categoryId: category,
     brandId: brand,
     status,
+    lowStock: lowOnly || undefined,
     sort,
     page,
     pageSize: view === "grid" ? 12 : 10,
@@ -130,7 +134,7 @@ export default function ProductsPage() {
             if (file) void onImport(file);
           }}
         />
-        <Button variant="secondary" icon="upload" loading={importing} onClick={() => fileRef.current?.click()}>
+        <Button variant="secondary" icon="upload" loading={importing} onClick={() => setImportHelpOpen(true)}>
           Import CSV
         </Button>
         <Button
@@ -210,6 +214,18 @@ export default function ProductsPage() {
               <option value="price_asc">Price low–high</option>
               <option value="price_desc">Price high–low</option>
             </Select>
+            <button
+              type="button"
+              onClick={() => setLowOnly((value) => !value)}
+              className={cn(
+                "inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors",
+                lowOnly
+                  ? "border-amber-200 bg-amber-50 text-amber-700"
+                  : "border-line bg-surface text-muted hover:text-ink",
+              )}
+            >
+              <Icon name="alert" size={13} /> Low stock
+            </button>
             <div className="col-span-2 flex rounded-lg border border-line bg-[#f3f1ea] p-0.5 sm:col-span-1">
               {(["table", "grid"] as const).map((mode) => (
                 <button
@@ -266,8 +282,13 @@ export default function ProductsPage() {
                   <TR key={product.id} onClick={() => router.push(`/products/${product.id}`)}>
                     <TD>
                       <div className="flex items-center gap-3">
-                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line bg-[#f7f5ef] text-[#7d8276]">
-                          <Icon name="box" size={16} />
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-[#f7f5ef] text-[#7d8276]">
+                          {product.imageUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={product.imageUrl} alt={product.name} className="h-full w-full object-cover" />
+                          ) : (
+                            <Icon name="box" size={16} />
+                          )}
                         </span>
                         <div className="min-w-0">
                           <p className="truncate text-[12.5px] font-medium text-ink">{product.name}</p>
@@ -339,8 +360,13 @@ export default function ProductsPage() {
                   className="group rounded-xl border border-line bg-surface p-4 transition-all hover:-translate-y-0.5 hover:border-line-strong hover:shadow-md"
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-line bg-[#f7f5ef] text-[#7d8276]">
-                      <Icon name="box" size={18} />
+                    <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-line bg-[#f7f5ef] text-[#7d8276]">
+                      {product.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={product.imageUrl} alt={product.name} className="h-full w-full object-cover" />
+                      ) : (
+                        <Icon name="box" size={18} />
+                      )}
                     </span>
                     <StatusBadge status={product.status} />
                   </div>
@@ -391,6 +417,48 @@ export default function ProductsPage() {
           <Icon name="shield" size={11} /> Scoped to {category || brand ? "selected filters" : "this workspace"}
         </span>
       </div>
+
+      <Modal
+        open={importHelpOpen}
+        onClose={() => setImportHelpOpen(false)}
+        title="Import products from CSV"
+        description="Products are matched and updated by SKU. Missing categories or brands are created automatically."
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="download"
+              onClick={() => downloadCsvRows("products-template.csv", PRODUCT_CSV_HEADERS, PRODUCT_CSV_SAMPLE_ROWS)}
+            >
+              Download template
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              icon="upload"
+              loading={importing}
+              onClick={() => {
+                setImportHelpOpen(false);
+                fileRef.current?.click();
+              }}
+            >
+              Choose CSV file
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-xs text-ink-soft">
+          <p>
+            Required columns: <span className="font-mono font-semibold">SKU</span>,{" "}
+            <span className="font-mono font-semibold">Name</span>,{" "}
+            <span className="font-mono font-semibold">SellingPrice</span>.
+          </p>
+          <p className="text-muted">
+            Optional columns: <span className="font-mono">Category, Brand, CostPrice, Stock, Status, Description</span>.
+          </p>
+        </div>
+      </Modal>
     </div>
   );
 }

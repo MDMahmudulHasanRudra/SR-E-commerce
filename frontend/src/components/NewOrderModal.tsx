@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api, type Paged } from "@/lib/api";
-import { useApi } from "@/lib/hooks";
-import type { CustomerListItem, OrderDetail, StockRow } from "@/lib/types";
+import { errorMessage, useApi } from "@/lib/hooks";
+import type { CustomerDetail, CustomerListItem, OrderDetail, PriceQuoteResponse, StockRow } from "@/lib/types";
 import { currency } from "@/lib/format";
 import { Icon } from "@/components/icons";
 import { useAuth } from "@/components/AuthProvider";
 import {
+  Badge,
   Button,
   Field,
   Input,
@@ -26,10 +27,12 @@ export function NewOrderModal({
   open,
   onClose,
   onCreated,
+  initialCustomerId,
 }: {
   open: boolean;
   onClose: () => void;
   onCreated: (order: OrderDetail) => void;
+  initialCustomerId?: string | null;
 }) {
   const { push } = useToast();
   const { session } = useAuth();
@@ -42,10 +45,25 @@ export function NewOrderModal({
   const [couponCode, setCouponCode] = useState("");
   const [shipping, setShipping] = useState("0");
   const [notes, setNotes] = useState("");
+  const [source, setSource] = useState("standalone");
+  const [externalOrderId, setExternalOrderId] = useState("");
+  const [addressMode, setAddressMode] = useState<"default" | "saved" | "custom">("default");
+  const [savedAddressId, setSavedAddressId] = useState("");
+  const [addrForm, setAddrForm] = useState({ line1: "", line2: "", city: "", state: "", postalCode: "", country: "" });
+  const [quoteSummary, setQuoteSummary] = useState<{
+    subtotal: number;
+    offerDiscount: number;
+    couponDiscount: number;
+    appliedOffers: string[];
+  } | null>(null);
+  const [quoting, setQuoting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const customers = useApi<Paged<CustomerListItem>>(open ? "/api/v1/customers?pageSize=200" : null);
+  const selectedCustomer = useApi<CustomerDetail>(
+    open && mode === "existing" && customerId ? `/api/v1/customers/${customerId}` : null,
+  );
   const stock = useApi<Paged<StockRow>>(open ? "/api/v1/inventory/stock?pageSize=200" : null);
 
   const variants = useMemo(() => {
@@ -59,7 +77,7 @@ export function NewOrderModal({
   useEffect(() => {
     if (!open) return;
     setMode("existing");
-    setCustomerId("");
+    setCustomerId(initialCustomerId ?? "");
     setCustomerName("");
     setCustomerEmail("");
     setCustomerPhone("");
@@ -67,15 +85,97 @@ export function NewOrderModal({
     setCouponCode("");
     setShipping("0");
     setNotes("");
+    setSource("standalone");
+    setExternalOrderId("");
+    setAddressMode("default");
+    setSavedAddressId("");
+    setAddrForm({ line1: "", line2: "", city: "", state: "", postalCode: "", country: "" });
+    setQuoteSummary(null);
     setError(null);
-  }, [open]);
+  }, [open, initialCustomerId]);
 
   const currencyCode = session?.user.currencyCode ?? "USD";
   const subtotal = lines.reduce((sum, line) => {
     const variant = variants.find((item) => item.variantId === line.variantId);
     return sum + (variant?.price ?? 0) * (Number(line.quantity) || 0);
   }, 0);
-  const grandEstimate = subtotal + (Number(shipping) || 0);
+  const netItemsEstimate = quoteSummary
+    ? Math.max(0, quoteSummary.subtotal - quoteSummary.offerDiscount - quoteSummary.couponDiscount)
+    : subtotal;
+  const grandEstimate = netItemsEstimate + (Number(shipping) || 0);
+
+  async function previewServerQuote() {
+    const validLines = lines.filter((line) => line.variantId && Number(line.quantity) > 0);
+    if (validLines.length === 0) {
+      push({ tone: "error", title: "Add at least one product line first" });
+      return;
+    }
+    setQuoting(true);
+    setError(null);
+    try {
+      const results = await Promise.all(
+        validLines.map((line) =>
+          api<PriceQuoteResponse>("/api/v1/pricing/quote", {
+            method: "POST",
+            body: {
+              variantId: line.variantId,
+              quantity: Math.max(1, Math.floor(Number(line.quantity))),
+              couponCode: couponCode.trim() || null,
+            },
+          }),
+        ),
+      );
+      let gross = 0;
+      let offerDisc = 0;
+      const offerNames = new Set<string>();
+      validLines.forEach((line, idx) => {
+        const qty = Math.max(1, Math.floor(Number(line.quantity)));
+        const q = results[idx].quote;
+        gross += q.listPrice * qty;
+        offerDisc += q.offerDiscount * qty;
+        if (q.offerName) offerNames.add(q.offerName);
+      });
+      const couponDisc = results.find((r) => r.coupon)?.coupon?.discountAmount ?? 0;
+      setQuoteSummary({
+        subtotal: gross,
+        offerDiscount: offerDisc,
+        couponDiscount: couponDisc,
+        appliedOffers: [...offerNames],
+      });
+    } catch (cause) {
+      setQuoteSummary(null);
+      setError(errorMessage(cause));
+    } finally {
+      setQuoting(false);
+    }
+  }
+
+  function buildShippingAddressJson(): string | null {
+    if (mode === "existing" && addressMode === "default") return null;
+    if (mode === "existing" && addressMode === "saved") {
+      const addr = selectedCustomer.data?.addresses.find((a) => a.id === savedAddressId);
+      if (!addr) return null;
+      return JSON.stringify({
+        line1: addr.line1,
+        line2: addr.line2,
+        city: addr.city,
+        state: addr.state,
+        postalCode: addr.postalCode,
+        country: addr.country,
+      });
+    }
+    if (addrForm.line1.trim() || addrForm.city.trim()) {
+      return JSON.stringify({
+        line1: addrForm.line1.trim(),
+        line2: addrForm.line2.trim() || null,
+        city: addrForm.city.trim(),
+        state: addrForm.state.trim() || null,
+        postalCode: addrForm.postalCode.trim() || null,
+        country: addrForm.country.trim(),
+      });
+    }
+    return null;
+  }
 
   async function submit() {
     setError(null);
@@ -106,8 +206,10 @@ export function NewOrderModal({
           items,
           couponCode: couponCode.trim() || null,
           shippingTotal: Number(shipping) || 0,
+          shippingAddressJson: buildShippingAddressJson(),
           notes: notes.trim() || null,
-          source: "standalone",
+          source: source.trim() || "standalone",
+          externalOrderId: externalOrderId.trim() || null,
         },
       });
       push({ title: "Order created", description: `${order.orderNumber} is pending confirmation.` });
@@ -118,6 +220,8 @@ export function NewOrderModal({
       setBusy(false);
     }
   }
+
+  const savedAddresses = selectedCustomer.data?.addresses ?? [];
 
   return (
     <Modal
@@ -130,6 +234,9 @@ export function NewOrderModal({
         <>
           <Button variant="secondary" size="sm" onClick={onClose} disabled={busy}>
             Cancel
+          </Button>
+          <Button variant="secondary" size="sm" icon="sparkle" loading={quoting} onClick={() => void previewServerQuote()}>
+            Verify server quote
           </Button>
           <Button variant="primary" size="sm" onClick={submit} loading={busy}>
             Create order · {currency(grandEstimate, currencyCode)}
@@ -196,7 +303,10 @@ export function NewOrderModal({
             <p className="text-xs font-semibold text-ink">Items</p>
             <button
               type="button"
-              onClick={() => setLines((current) => [...current, { key: (lineKey += 1), variantId: "", quantity: "1" }])}
+              onClick={() => {
+                setQuoteSummary(null);
+                setLines((current) => [...current, { key: (lineKey += 1), variantId: "", quantity: "1" }]);
+              }}
               className="inline-flex items-center gap-1 text-[11px] font-medium text-brand hover:underline"
             >
               <Icon name="plus" size={12} /> Add line
@@ -213,13 +323,14 @@ export function NewOrderModal({
                     </label>
                     <Select
                       value={line.variantId}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        setQuoteSummary(null);
                         setLines((current) =>
                           current.map((item) =>
                             item.key === line.key ? { ...item, variantId: event.target.value } : item,
                           ),
-                        )
-                      }
+                        );
+                      }}
                     >
                       <option value="">Select a variant…</option>
                       {variants.map((item) => (
@@ -238,13 +349,14 @@ export function NewOrderModal({
                       min="1"
                       step="1"
                       value={line.quantity}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        setQuoteSummary(null);
                         setLines((current) =>
                           current.map((item) =>
                             item.key === line.key ? { ...item, quantity: event.target.value } : item,
                           ),
-                        )
-                      }
+                        );
+                      }}
                     />
                   </div>
                   <div className="w-[88px] pb-2.5 text-right">
@@ -257,7 +369,10 @@ export function NewOrderModal({
                     type="button"
                     aria-label="Remove line"
                     disabled={lines.length === 1}
-                    onClick={() => setLines((current) => current.filter((item) => item.key !== line.key))}
+                    onClick={() => {
+                      setQuoteSummary(null);
+                      setLines((current) => current.filter((item) => item.key !== line.key));
+                    }}
                     className="mb-1 flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:opacity-30"
                   >
                     <Icon name="trash" size={14} />
@@ -274,11 +389,82 @@ export function NewOrderModal({
           )}
         </div>
 
+        <div className="rounded-xl border border-line bg-[#faf9f5] p-3.5 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-ink">Shipping address</p>
+            {mode === "existing" && (
+              <div className="flex rounded-lg border border-line bg-surface p-0.5">
+                {(
+                  [
+                    { id: "default", label: "Customer default" },
+                    ...(savedAddresses.length > 0 ? [{ id: "saved", label: "Saved" }] : []),
+                    { id: "custom", label: "Custom" },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setAddressMode(opt.id as "default" | "saved" | "custom")}
+                    className={cn(
+                      "rounded-md px-2 py-1 text-[10.5px] font-medium transition-colors",
+                      addressMode === opt.id ? "bg-[#f0eee6] text-ink" : "text-muted hover:text-ink-soft",
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {mode === "existing" && addressMode === "default" && (
+            <p className="text-[11px] text-muted">
+              Uses the customer&apos;s default shipping address on file (if present).
+            </p>
+          )}
+          {mode === "existing" && addressMode === "saved" && (
+            <Select value={savedAddressId} onChange={(event) => setSavedAddressId(event.target.value)}>
+              <option value="">Choose saved address…</option>
+              {savedAddresses.map((addr) => (
+                <option key={addr.id} value={addr.id}>
+                  [{addr.type}] {addr.line1}, {addr.city}, {addr.country}
+                </option>
+              ))}
+            </Select>
+          )}
+          {(mode === "guest" || addressMode === "custom") && (
+            <div className="grid gap-2.5 sm:grid-cols-2">
+              <Input
+                value={addrForm.line1}
+                onChange={(event) => setAddrForm({ ...addrForm, line1: event.target.value })}
+                placeholder="Street address line 1"
+              />
+              <Input
+                value={addrForm.city}
+                onChange={(event) => setAddrForm({ ...addrForm, city: event.target.value })}
+                placeholder="City"
+              />
+              <Input
+                value={addrForm.state}
+                onChange={(event) => setAddrForm({ ...addrForm, state: event.target.value })}
+                placeholder="State / region"
+              />
+              <Input
+                value={addrForm.country}
+                onChange={(event) => setAddrForm({ ...addrForm, country: event.target.value })}
+                placeholder="Country"
+              />
+            </div>
+          )}
+        </div>
+
         <div className="grid gap-3 sm:grid-cols-3">
           <Field label="Coupon code" hint="Validated server-side.">
             <Input
               value={couponCode}
-              onChange={(event) => setCouponCode(event.target.value.toUpperCase())}
+              onChange={(event) => {
+                setQuoteSummary(null);
+                setCouponCode(event.target.value.toUpperCase());
+              }}
               placeholder="WELCOME10"
               className="font-mono text-xs"
             />
@@ -295,17 +481,57 @@ export function NewOrderModal({
           <div className="rounded-lg border border-line bg-[#faf9f5] px-3 py-2 text-[11px]">
             <div className="flex justify-between text-muted">
               <span>Items</span>
-              <span className="num">{currency(subtotal, currencyCode)}</span>
+              <span className="num">{currency(quoteSummary?.subtotal ?? subtotal, currencyCode)}</span>
             </div>
+            {quoteSummary && quoteSummary.offerDiscount > 0 && (
+              <div className="mt-1 flex justify-between text-emerald-700">
+                <span>Offers</span>
+                <span className="num">−{currency(quoteSummary.offerDiscount, currencyCode)}</span>
+              </div>
+            )}
+            {quoteSummary && quoteSummary.couponDiscount > 0 && (
+              <div className="mt-1 flex justify-between text-violet-700">
+                <span>Coupon</span>
+                <span className="num">−{currency(quoteSummary.couponDiscount, currencyCode)}</span>
+              </div>
+            )}
             <div className="mt-1 flex justify-between text-muted">
               <span>Shipping</span>
               <span className="num">{currency(Number(shipping) || 0, currencyCode)}</span>
             </div>
             <div className="mt-1.5 flex justify-between border-t border-line pt-1.5 font-medium text-ink">
-              <span>Estimate</span>
+              <span>{quoteSummary ? "Quoted" : "Estimate"}</span>
               <span className="num">{currency(grandEstimate, currencyCode)}</span>
             </div>
+            {quoteSummary && quoteSummary.appliedOffers.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {quoteSummary.appliedOffers.map((offer) => (
+                  <Badge key={offer} tone="emerald">
+                    {offer}
+                  </Badge>
+                ))}
+              </div>
+            )}
           </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Order source">
+            <Select value={source} onChange={(event) => setSource(event.target.value)}>
+              <option value="standalone">Standalone</option>
+              <option value="get-assist">Get Assist</option>
+              <option value="pos">Point of sale</option>
+              <option value="phone">Phone / Manual</option>
+            </Select>
+          </Field>
+          <Field label="External order ID" hint="Optional reference from host or channel.">
+            <Input
+              value={externalOrderId}
+              onChange={(event) => setExternalOrderId(event.target.value)}
+              placeholder="EXT-1042"
+              className="font-mono text-xs"
+            />
+          </Field>
         </div>
 
         <Field label="Internal notes">
@@ -317,7 +543,7 @@ export function NewOrderModal({
           />
         </Field>
         <p className="flex items-center gap-1.5 text-[10.5px] text-muted">
-          <Icon name="shield" size={11} /> The server reserves stock on confirmation and writes an audit event.
+          <Icon name="shield" size={11} /> The server reserves stock immediately and writes an audit event.
         </p>
       </div>
     </Modal>

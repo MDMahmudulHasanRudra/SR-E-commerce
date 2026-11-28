@@ -27,6 +27,9 @@ later Get Assist connection.
   dead-letter status and connection lifecycle.
 - **Multi-tenancy** — tenant + workspace model with server-side membership
   checks and EF global query filters.
+- **Dashboard UI** — Next.js app for every module above, plus tenant
+  registration, category/brand CRUD, printable invoices, a ⌘K command palette,
+  theme/density settings and an embedded (host) mode.
 
 Signing in from Get Assist works through a signed, single-use host launch (a
 person links their Commerce account once). OIDC SSO and Get Assist-hosted
@@ -98,7 +101,8 @@ Windows to avoid locked build outputs.
 
 Covered scenarios include tenant isolation, membership enforcement, provisioning
 idempotency, read scopes, disable/reconnect/revoke, outbox retry without
-duplicates, host outage resilience and the SSO `501` stub.
+duplicates, host outage resilience, username login, password change, branch
+creation, reorder thresholds, price history and the SSO `501` stub.
 
 ## Project layout
 
@@ -130,6 +134,7 @@ docker-compose.yml
 | [EVENTS_AND_WEBHOOKS.md](docs/EVENTS_AND_WEBHOOKS.md) | Outbox, event catalog, signatures, retries |
 | [DATA_OWNERSHIP.md](docs/DATA_OWNERSHIP.md) | Data ownership, PII, retention, open agreements |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Local/container deployment, migrations, backups |
+| [FRONTEND_GAP_PLAN.md](docs/FRONTEND_GAP_PLAN.md) | Frontend coverage map and completion status |
 
 ## Integration status
 
@@ -149,8 +154,9 @@ docker-compose.yml
 - No hard-delete/subject-access workflow.
 - The outbox dispatcher is not safe to run in multiple API replicas without a
   leader lock.
-- Product images, tax rates and reorder settings have API support but limited
-  dedicated UI.
+- Product images are URL-only and there is no media library.
+- Reorder thresholds inform low-stock views but do not generate purchase
+  orders automatically.
 
 ## License
 

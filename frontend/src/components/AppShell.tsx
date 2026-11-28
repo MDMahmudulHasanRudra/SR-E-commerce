@@ -4,9 +4,11 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "./AuthProvider";
+import { CommandPalette } from "./CommandPalette";
 import { Icon, type IconName } from "./icons";
 import { Avatar, Button, Kbd, Spinner, cn } from "./ui";
 import { api } from "@/lib/api";
+import { useShellTheme } from "@/lib/theme";
 import type { WorkspaceOption } from "@/lib/types";
 
 type NavItem = { href: string; label: string; icon: IconName };
@@ -18,6 +20,8 @@ const navigation: NavGroup[] = [
     label: "Catalog",
     items: [
       { href: "/products", label: "Products", icon: "box" },
+      { href: "/categories", label: "Categories", icon: "folder" },
+      { href: "/brands", label: "Brands", icon: "award" },
       { href: "/inventory", label: "Inventory", icon: "warehouse" },
     ],
   },
@@ -49,6 +53,8 @@ const navigation: NavGroup[] = [
 const titles: Record<string, string> = {
   "/dashboard": "Dashboard",
   "/products": "Products",
+  "/categories": "Categories",
+  "/brands": "Brands",
   "/inventory": "Inventory",
   "/orders": "Orders",
   "/customers": "Customers",
@@ -61,8 +67,13 @@ const titles: Record<string, string> = {
 };
 
 function sectionFor(pathname: string): string {
-  if (pathname.startsWith("/products")) return "Catalog";
-  if (pathname.startsWith("/inventory")) return "Catalog";
+  if (
+    pathname.startsWith("/products") ||
+    pathname.startsWith("/categories") ||
+    pathname.startsWith("/brands") ||
+    pathname.startsWith("/inventory")
+  )
+    return "Catalog";
   if (pathname.startsWith("/orders") || pathname.startsWith("/customers") || pathname.startsWith("/offers"))
     return "Sales";
   if (
@@ -83,13 +94,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { session, ready, signOut, switchWorkspace } = useAuth();
+  const { config, isEmbedded, backUrl, hostName } = useShellTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [workspaces, setWorkspaces] = useState<WorkspaceOption[] | null>(null);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const searchRef = useRef<HTMLInputElement>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const createRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
 
@@ -107,7 +118,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        searchRef.current?.focus();
+        setPaletteOpen((prev) => !prev);
       }
     };
     const onClick = (event: MouseEvent) => {
@@ -134,10 +145,21 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const pageTitle = titles[Object.keys(titles).find((key) => isActive(pathname, key)) ?? ""] ?? "Commerce";
   const section = sectionFor(pathname);
+  const brandHeading = config.brandTitle.trim() || session.user.companyName;
 
   const sidebar = (
     <div className="flex h-full flex-col bg-sidebar text-[#e9ebe2]">
       <div className="relative px-4 pb-4 pt-5" ref={workspaceRef}>
+        {isEmbedded && backUrl && (
+          <a
+            href={backUrl}
+            target="_top"
+            className="mb-3 flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.06] px-2.5 py-1.5 text-[11px] font-medium text-[#e9ebe2] transition-colors hover:bg-white/[0.12]"
+          >
+            <Icon name="chevronLeft" size={13} className="text-lime" />
+            <span className="truncate">Back to {hostName}</span>
+          </a>
+        )}
         <button
           type="button"
           onClick={() => setWorkspaceOpen((value) => !value)}
@@ -148,7 +170,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[13px] font-semibold leading-tight text-white">
-              {session.user.companyName}
+              {brandHeading}
             </span>
             <span className="mt-0.5 flex items-center gap-1 text-[10.5px] text-[#9ea395]">
               <span className="h-1 w-1 rounded-full bg-lime" />
@@ -169,33 +191,40 @@ export function AppShell({ children }: { children: ReactNode }) {
               </div>
             )}
             {!workspaceBusy &&
-              (workspaces ?? []).map((workspace) => (
-                <button
-                  key={workspace.id}
-                  type="button"
-                  disabled={workspace.id === session.user.workspaceId}
-                  onClick={async () => {
-                    setWorkspaceBusy(true);
-                    try {
-                      await switchWorkspace(workspace.id);
-                    } finally {
-                      setWorkspaceBusy(false);
-                    }
-                  }}
-                  className={cn(
-                    "flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2 text-left text-xs transition-colors",
-                    workspace.id === session.user.workspaceId
-                      ? "bg-white/[0.06] text-white"
-                      : "text-[#c7cabf] hover:bg-white/[0.06] hover:text-white",
-                  )}
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate font-medium">{workspace.name}</span>
-                    <span className="block truncate text-[10px] text-[#8d9284]">{workspace.companyName}</span>
-                  </span>
-                  {workspace.id === session.user.workspaceId && <Icon name="check" size={13} className="text-lime" />}
-                </button>
-              ))}
+              (workspaces ?? []).map((workspace) => {
+                const wsId = workspace.workspaceId ?? workspace.id ?? "";
+                const wsCompany = workspace.tenantName ?? workspace.companyName ?? "";
+                return (
+                  <button
+                    key={wsId}
+                    type="button"
+                    disabled={!wsId || wsId === session.user.workspaceId}
+                    onClick={async () => {
+                      if (!wsId) return;
+                      setWorkspaceBusy(true);
+                      try {
+                        await switchWorkspace(wsId);
+                      } finally {
+                        setWorkspaceBusy(false);
+                      }
+                    }}
+                    className={cn(
+                      "flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2 text-left text-xs transition-colors",
+                      wsId === session.user.workspaceId
+                        ? "bg-white/[0.06] text-white"
+                        : "text-[#c7cabf] hover:bg-white/[0.06] hover:text-white",
+                    )}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{workspace.name}</span>
+                      <span className="block truncate text-[10px] text-[#8d9284]">
+                        {wsCompany} · {workspace.currencyCode}
+                      </span>
+                    </span>
+                    {wsId === session.user.workspaceId && <Icon name="check" size={13} className="text-lime" />}
+                  </button>
+                );
+              })}
             {!workspaceBusy && workspaces?.length === 0 && (
               <p className="px-2 py-2 text-[11px] text-[#8d9284]">No workspaces available.</p>
             )}
@@ -271,17 +300,17 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[248px] lg:block">{sidebar}</aside>
+      <aside className="no-print fixed inset-y-0 left-0 z-30 hidden w-[248px] lg:block">{sidebar}</aside>
 
       {mobileOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden">
+        <div className="no-print fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-[#0e100c]/50 backdrop-blur-[2px]" onClick={() => setMobileOpen(false)} />
           <div className="animate-slide-in absolute inset-y-0 left-0 w-[270px] shadow-2xl">{sidebar}</div>
         </div>
       )}
 
-      <div className="flex min-h-screen flex-col lg:pl-[248px]">
-        <header className="sticky top-0 z-20 border-b border-line bg-canvas/85 backdrop-blur-md">
+      <div className="flex min-h-screen flex-col lg:pl-[248px] print:pl-0">
+        <header className="no-print sticky top-0 z-20 border-b border-line bg-canvas/85 backdrop-blur-md">
           <div className="mx-auto flex h-[60px] max-w-[1500px] items-center gap-3 px-4 sm:px-6 lg:px-8">
             <button
               type="button"
@@ -296,34 +325,39 @@ export function AppShell({ children }: { children: ReactNode }) {
               <span className="text-muted">{section}</span>
               <Icon name="chevronRight" size={12} className="text-[#b3b6aa]" />
               <span className="truncate font-medium text-ink">{pageTitle}</span>
+              {isEmbedded && (
+                <span className="ml-1 rounded-full border border-[#cfe2d6] bg-brand-soft px-2 py-0.5 text-[10px] font-medium text-brand">
+                  Integrated
+                </span>
+              )}
             </div>
 
-            <form
-              className="relative ml-auto hidden w-full max-w-[290px] md:block"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const term = search.trim();
-                router.push(term ? `/products?search=${encodeURIComponent(term)}` : "/products");
-              }}
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              className="relative ml-auto hidden h-9 w-full max-w-[290px] items-center rounded-lg border border-line bg-surface pl-9 pr-14 text-left text-xs text-[#a6a99e] transition-colors hover:border-line-strong md:flex"
             >
               <Icon
                 name="search"
                 size={15}
                 className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#95998e]"
               />
-              <input
-                ref={searchRef}
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search products, orders…"
-                className="h-9 w-full rounded-lg border border-line bg-surface pl-9 pr-14 text-xs text-ink placeholder:text-[#a6a99e] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/10"
-              />
+              <span className="truncate">Search products, orders, customers…</span>
               <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2">
                 <Kbd>⌘K</Kbd>
               </span>
-            </form>
+            </button>
 
             <div className="ml-auto flex items-center gap-1.5 md:ml-2">
+              {isEmbedded && backUrl && (
+                <a
+                  href={backUrl}
+                  target="_top"
+                  className="hidden items-center gap-1 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[11px] font-medium text-ink-soft transition-colors hover:bg-[#f3f1ea] sm:inline-flex"
+                >
+                  <Icon name="chevronLeft" size={13} /> Back to {hostName}
+                </a>
+              )}
               <Link
                 href="/inventory?lowStock=1"
                 aria-label="Inventory alerts"
@@ -350,6 +384,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                       { label: "New order", href: "/orders?new=1", icon: "orders" as IconName },
                       { label: "New product", href: "/products/new", icon: "box" as IconName },
                       { label: "New customer", href: "/customers?new=1", icon: "users" as IconName },
+                      { label: "New category", href: "/categories?new=1", icon: "folder" as IconName },
                       { label: "New purchase order", href: "/purchasing?new=1", icon: "truck" as IconName },
                       { label: "Record payment", href: "/finance?new=payment", icon: "wallet" as IconName },
                     ].map((item) => (
@@ -380,11 +415,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-[1500px] flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+        <main className="mx-auto w-full max-w-[1500px] flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8 print:p-0">
           {children}
         </main>
 
-        <footer className="mx-auto flex w-full max-w-[1500px] flex-wrap items-center justify-between gap-2 px-4 pb-6 text-[10.5px] text-[#989c90] sm:px-6 lg:px-8">
+        <footer className="no-print mx-auto flex w-full max-w-[1500px] flex-wrap items-center justify-between gap-2 px-4 pb-6 text-[10.5px] text-[#989c90] sm:px-6 lg:px-8">
           <span>
             {session.user.companyName} · {session.user.workspaceName}
           </span>
@@ -393,6 +428,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           </span>
         </footer>
       </div>
+
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   );
 }

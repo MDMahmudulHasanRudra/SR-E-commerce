@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { Button, Card, CardBody, CardHeader, Field, Input, Select, Switch, Textarea } from "./ui";
+import { Icon } from "./icons";
+import { Badge, Button, Card, CardBody, CardHeader, Field, Input, Select, Switch, Textarea } from "./ui";
 import type { Brand, Category, ProductDetail } from "@/lib/types";
 
 export type ProductPayload = {
@@ -32,6 +33,55 @@ export type ProductPayload = {
   }[];
   images: string[];
 };
+
+type VariantDraft = {
+  key: number;
+  id: string | null;
+  name: string;
+  sku: string;
+  attributesText: string;
+  costPrice: string;
+  price: string;
+  isActive: boolean;
+  isDefault: boolean;
+  onHand?: number;
+};
+
+let variantDraftKey = 1;
+
+function parseAttributesDisplay(json: string | null | undefined): string {
+  if (!json) return "";
+  try {
+    const obj = JSON.parse(json) as Record<string, unknown>;
+    return Object.entries(obj)
+      .map(([k, v]) => `${k}: ${String(v)}`)
+      .join(", ");
+  } catch {
+    return json;
+  }
+}
+
+function serializeAttributes(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("{")) return trimmed;
+  const pairs = trimmed
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const obj: Record<string, string> = {};
+  for (const pair of pairs) {
+    const idx = pair.indexOf(":");
+    if (idx > 0) {
+      const k = pair.slice(0, idx).trim();
+      const v = pair.slice(idx + 1).trim();
+      if (k && v) obj[k] = v;
+    } else {
+      obj["Option"] = pair;
+    }
+  }
+  return Object.keys(obj).length > 0 ? JSON.stringify(obj) : null;
+}
 
 export function ProductForm({
   initial,
@@ -67,8 +117,80 @@ export function ProductForm({
   const [tags, setTags] = useState(initial?.tags ?? "");
   const [seoTitle, setSeoTitle] = useState(initial?.seoTitle ?? "");
   const [seoDescription, setSeoDescription] = useState(initial?.seoDescription ?? "");
-  const [images, setImages] = useState((initial?.images ?? []).join("\n"));
+  const [imageList, setImageList] = useState<string[]>(initial?.images ?? []);
+  const [newImageUrl, setNewImageUrl] = useState("");
+  const [variants, setVariants] = useState<VariantDraft[]>(() =>
+    initial && initial.variants.length > 0
+      ? initial.variants.map((v) => ({
+          key: (variantDraftKey += 1),
+          id: v.id,
+          name: v.name,
+          sku: v.sku,
+          attributesText: parseAttributesDisplay(v.attributesJson),
+          costPrice: String(v.costPrice),
+          price: String(v.price),
+          isActive: v.isActive,
+          isDefault: v.isDefault,
+          onHand: v.onHand,
+        }))
+      : [
+          {
+            key: (variantDraftKey += 1),
+            id: null,
+            name: "Default",
+            sku: initial?.sku ?? "",
+            attributesText: "",
+            costPrice: String(initial?.costPrice ?? 0),
+            price: String(initial?.basePrice ?? 0),
+            isActive: true,
+            isDefault: true,
+          },
+        ],
+  );
   const [localError, setLocalError] = useState<string | null>(null);
+
+  function addVariant() {
+    const suffix = variants.length + 1;
+    const baseSku = sku.trim().toUpperCase();
+    setVariants((prev) => [
+      ...prev,
+      {
+        key: (variantDraftKey += 1),
+        id: null,
+        name: `Variant ${suffix}`,
+        sku: baseSku ? `${baseSku}-V${suffix}` : "",
+        attributesText: "",
+        costPrice: costPrice || "0",
+        price: basePrice || "0",
+        isActive: true,
+        isDefault: prev.length === 0,
+      },
+    ]);
+  }
+
+  function setDefaultVariant(key: number) {
+    setVariants((prev) => prev.map((v) => ({ ...v, isDefault: v.key === key })));
+  }
+
+  function addImage() {
+    const trimmed = newImageUrl.trim();
+    if (!trimmed) return;
+    if (!imageList.includes(trimmed)) {
+      setImageList((prev) => [...prev, trimmed]);
+    }
+    setNewImageUrl("");
+  }
+
+  function moveImage(index: number, delta: -1 | 1) {
+    const target = index + delta;
+    if (target < 0 || target >= imageList.length) return;
+    setImageList((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(index, 1);
+      next.splice(target, 0, moved);
+      return next;
+    });
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -81,6 +203,31 @@ export function ProductForm({
       setLocalError("Prices cannot be negative.");
       return;
     }
+    for (const v of variants) {
+      if (!v.name.trim()) {
+        setLocalError("Every variant must have a name.");
+        return;
+      }
+      if (Number(v.price) < 0 || Number(v.costPrice) < 0) {
+        setLocalError("Variant prices cannot be negative.");
+        return;
+      }
+    }
+
+    const pendingImage = newImageUrl.trim();
+    const finalImages = pendingImage && !imageList.includes(pendingImage) ? [...imageList, pendingImage] : imageList;
+
+    const preparedVariants = variants.map((v, idx) => ({
+      id: v.id,
+      name: v.name.trim(),
+      sku: v.sku.trim().toUpperCase(),
+      attributesJson: serializeAttributes(v.attributesText),
+      costPrice: Number(v.costPrice) || 0,
+      price: Number(v.price) || 0,
+      isActive: v.isActive,
+      isDefault: v.isDefault || (idx === 0 && !variants.some((x) => x.isDefault)),
+    }));
+
     await onSubmit({
       name: name.trim(),
       sku: sku.trim() || null,
@@ -97,20 +244,8 @@ export function ProductForm({
       tags: tags.trim() || null,
       seoTitle: seoTitle.trim() || null,
       seoDescription: seoDescription.trim() || null,
-      variants: initial?.variants.map((variant) => ({
-        id: variant.id,
-        name: variant.name,
-        sku: variant.sku,
-        attributesJson: variant.attributesJson ?? null,
-        costPrice: variant.costPrice,
-        price: variant.price,
-        isActive: variant.isActive,
-        isDefault: variant.isDefault,
-      })),
-      images: images
-        .split("\n")
-        .map((value) => value.trim())
-        .filter(Boolean),
+      variants: preparedVariants,
+      images: finalImages,
     });
   }
 
@@ -227,16 +362,214 @@ export function ProductForm({
         </Card>
 
         <Card>
-          <CardHeader title="Media & SEO" description="Optional. One image URL per line." />
+          <CardHeader
+            title="Variants & attributes"
+            description="Each product has at least one variant. Variant prices drive order totals."
+            action={
+              <Button type="button" variant="secondary" size="sm" icon="plus" onClick={addVariant}>
+                Add variant
+              </Button>
+            }
+          />
+          <CardBody className="space-y-3">
+            {variants.map((variant, idx) => (
+              <div key={variant.key} className="rounded-xl border border-line bg-[#faf9f5] p-3.5">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-ink">Variant {idx + 1}</span>
+                    {variant.isDefault && <Badge tone="brand">Default</Badge>}
+                    {variant.onHand !== undefined && (
+                      <Badge tone="zinc">{variant.onHand} on hand</Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {!variant.isDefault && (
+                      <button
+                        type="button"
+                        onClick={() => setDefaultVariant(variant.key)}
+                        className="text-[11px] font-medium text-brand hover:underline"
+                      >
+                        Set default
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={variants.length <= 1}
+                      onClick={() => setVariants((prev) => prev.filter((item) => item.key !== variant.key))}
+                      className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:opacity-30"
+                      aria-label="Remove variant"
+                    >
+                      <Icon name="trash" size={13} />
+                    </button>
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <Field label="Variant name" required>
+                    <Input
+                      value={variant.name}
+                      onChange={(event) =>
+                        setVariants((prev) =>
+                          prev.map((item) =>
+                            item.key === variant.key ? { ...item, name: event.target.value } : item,
+                          ),
+                        )
+                      }
+                      placeholder="Default / Red · L"
+                    />
+                  </Field>
+                  <Field label="Variant SKU">
+                    <Input
+                      value={variant.sku}
+                      onChange={(event) =>
+                        setVariants((prev) =>
+                          prev.map((item) =>
+                            item.key === variant.key ? { ...item, sku: event.target.value.toUpperCase() } : item,
+                          ),
+                        )
+                      }
+                      placeholder="SKU-VAR"
+                      className="font-mono text-xs"
+                    />
+                  </Field>
+                  <Field label="Selling price">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={variant.price}
+                      onChange={(event) =>
+                        setVariants((prev) =>
+                          prev.map((item) =>
+                            item.key === variant.key ? { ...item, price: event.target.value } : item,
+                          ),
+                        )
+                      }
+                    />
+                  </Field>
+                  <Field label="Cost price">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={variant.costPrice}
+                      onChange={(event) =>
+                        setVariants((prev) =>
+                          prev.map((item) =>
+                            item.key === variant.key ? { ...item, costPrice: event.target.value } : item,
+                          ),
+                        )
+                      }
+                    />
+                  </Field>
+                </div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                  <Field label="Attributes" hint="Comma-separated key: value pairs, e.g. Color: Black, Size: M">
+                    <Input
+                      value={variant.attributesText}
+                      onChange={(event) =>
+                        setVariants((prev) =>
+                          prev.map((item) =>
+                            item.key === variant.key ? { ...item, attributesText: event.target.value } : item,
+                          ),
+                        )
+                      }
+                      placeholder="Color: Matte Black, Storage: 128GB"
+                      className="text-xs"
+                    />
+                  </Field>
+                  <div className="pb-1">
+                    <Switch
+                      checked={variant.isActive}
+                      onChange={(checked) =>
+                        setVariants((prev) =>
+                          prev.map((item) =>
+                            item.key === variant.key ? { ...item, isActive: checked } : item,
+                          ),
+                        )
+                      }
+                      label="Active"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader title="Media & SEO" description="Add image URLs with live preview, plus search metadata." />
           <CardBody className="space-y-4">
-            <Field label="Image URLs">
-              <Textarea
-                value={images}
-                onChange={(event) => setImages(event.target.value)}
-                placeholder="https://cdn.example.com/product-front.jpg"
-                className="min-h-[80px] font-mono text-xs"
-              />
-            </Field>
+            <div className="flex flex-wrap gap-2">
+              <div className="min-w-0 flex-1">
+                <Input
+                  value={newImageUrl}
+                  onChange={(event) => setNewImageUrl(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      addImage();
+                    }
+                  }}
+                  placeholder="https://cdn.example.com/product-front.jpg"
+                  className="font-mono text-xs"
+                />
+              </div>
+              <Button type="button" variant="secondary" icon="plus" onClick={addImage}>
+                Add image
+              </Button>
+            </div>
+
+            {imageList.length > 0 && (
+              <div className="grid gap-3 sm:grid-cols-3">
+                {imageList.map((url, idx) => (
+                  <div key={`${url}-${idx}`} className="overflow-hidden rounded-xl border border-line bg-[#faf9f5]">
+                    <div className="relative flex h-28 items-center justify-center overflow-hidden bg-surface">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={url} alt={`Product media ${idx + 1}`} className="h-full w-full object-cover" />
+                      {idx === 0 && (
+                        <span className="absolute left-2 top-2 rounded-full bg-ink/80 px-2 py-0.5 text-[9.5px] font-medium text-white">
+                          Primary
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between gap-1 px-2.5 py-2">
+                      <span className="truncate font-mono text-[10px] text-muted" title={url}>
+                        {url}
+                      </span>
+                      <div className="flex shrink-0 items-center gap-0.5">
+                        <button
+                          type="button"
+                          disabled={idx === 0}
+                          onClick={() => moveImage(idx, -1)}
+                          className="rounded p-1 text-muted hover:bg-[#ecebe4] disabled:opacity-30"
+                          aria-label="Move image earlier"
+                        >
+                          <Icon name="chevronLeft" size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={idx === imageList.length - 1}
+                          onClick={() => moveImage(idx, 1)}
+                          className="rounded p-1 text-muted hover:bg-[#ecebe4] disabled:opacity-30"
+                          aria-label="Move image later"
+                        >
+                          <Icon name="chevronRight" size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setImageList((prev) => prev.filter((_, i) => i !== idx))}
+                          className="rounded p-1 text-muted hover:bg-rose-50 hover:text-rose-600"
+                          aria-label="Remove image"
+                        >
+                          <Icon name="trash" size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="SEO title">
                 <Input value={seoTitle} onChange={(event) => setSeoTitle(event.target.value)} />
@@ -283,27 +616,25 @@ export function ProductForm({
           </CardBody>
         </Card>
 
-        {initial && (
-          <Card>
-            <CardHeader title="Variants" description={`${initial.variants.length} variant(s)`} />
-            <div className="divide-y divide-[#efede5]">
-              {initial.variants.map((variant) => (
-                <div key={variant.id} className="flex items-center justify-between gap-3 px-5 py-3 text-xs">
-                  <div className="min-w-0">
-                    <p className="truncate font-medium text-ink">{variant.name}</p>
-                    <p className="mt-0.5 font-mono text-[10px] text-muted">{variant.sku}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="num font-medium">{variant.price.toFixed(2)}</p>
-                    <p className="mt-0.5 text-[10px] text-muted">
-                      {variant.onHand} on hand
-                    </p>
-                  </div>
+        <Card>
+          <CardHeader title="Summary" description={`${variants.length} variant(s) · ${imageList.length} image(s)`} />
+          <div className="divide-y divide-[#efede5]">
+            {variants.map((variant) => (
+              <div key={variant.key} className="flex items-center justify-between gap-3 px-5 py-3 text-xs">
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-ink">{variant.name || "Untitled variant"}</p>
+                  <p className="mt-0.5 font-mono text-[10px] text-muted">{variant.sku || "Auto SKU"}</p>
                 </div>
-              ))}
-            </div>
-          </Card>
-        )}
+                <div className="text-right">
+                  <p className="num font-medium">{Number(variant.price || 0).toFixed(2)}</p>
+                  <p className="mt-0.5 text-[10px] text-muted">
+                    {variant.isDefault ? "Default" : variant.isActive ? "Active" : "Inactive"}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
 
         <Card>
           <CardBody className="space-y-3">

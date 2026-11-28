@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { api, query, type Paged } from "@/lib/api";
 import { errorMessage, useApi, useDebounced } from "@/lib/hooks";
+import { ROLE_MATRIX } from "@/lib/permissions";
+import { useShellTheme, type ShellDensity, type ThemePreset } from "@/lib/theme";
 import type { AuditLog, CompanySettings, TaxRate, TeamMember } from "@/lib/types";
 import { date, dateTime, number, percent, relative } from "@/lib/format";
 import { Icon } from "@/components/icons";
@@ -25,6 +27,8 @@ import {
   SearchInput,
   Select,
   Skeleton,
+  StatusBadge,
+  Switch,
   TD,
   TH,
   THead,
@@ -39,13 +43,23 @@ import { useAuth } from "@/components/AuthProvider";
 const roles = ["Viewer", "Staff", "Manager", "Admin", "Owner"];
 
 export default function SettingsPage() {
-  const { session, refresh } = useAuth();
+  const { session, refresh, switchWorkspace } = useAuth();
+  const { config, updateConfig, resetConfig } = useShellTheme();
   const { push } = useToast();
   const [tab, setTab] = useState("company");
 
   const company = useApi<CompanySettings>("/api/v1/settings/company");
+  const workspaces = useApi<CompanySettings[]>("/api/v1/settings/workspaces");
   const team = useApi<TeamMember[]>("/api/v1/settings/team");
   const taxRates = useApi<TaxRate[]>("/api/v1/settings/tax-rates");
+
+  const [wsOpen, setWsOpen] = useState(false);
+  const [wsForm, setWsForm] = useState({ name: "", currencyCode: "USD", timeZone: "UTC" });
+  const [wsBusy, setWsBusy] = useState(false);
+
+  const [pwdOpen, setPwdOpen] = useState(false);
+  const [pwdForm, setPwdForm] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
+  const [pwdBusy, setPwdBusy] = useState(false);
 
   const [auditSearch, setAuditSearch] = useState("");
   const [auditPage, setAuditPage] = useState(1);
@@ -210,6 +224,57 @@ export default function SettingsPage() {
     }
   }
 
+  async function createWorkspace() {
+    if (!wsForm.name.trim()) {
+      push({ tone: "error", title: "Workspace name is required" });
+      return;
+    }
+    setWsBusy(true);
+    try {
+      await api("/api/v1/settings/workspaces", {
+        method: "POST",
+        body: {
+          name: wsForm.name.trim(),
+          currencyCode: wsForm.currencyCode.trim().toUpperCase() || "USD",
+          timeZone: wsForm.timeZone || "UTC",
+        },
+      });
+      await workspaces.reload();
+      push({ title: "Workspace created" });
+      setWsOpen(false);
+      setWsForm({ name: "", currencyCode: "USD", timeZone: "UTC" });
+    } catch (cause) {
+      push({ tone: "error", title: "Could not create workspace", description: errorMessage(cause) });
+    } finally {
+      setWsBusy(false);
+    }
+  }
+
+  async function changePassword() {
+    if (!pwdForm.currentPassword || pwdForm.newPassword.length < 8) {
+      push({ tone: "error", title: "Enter your current password and a new password (min 8 chars)" });
+      return;
+    }
+    if (pwdForm.newPassword !== pwdForm.confirmPassword) {
+      push({ tone: "error", title: "New passwords do not match" });
+      return;
+    }
+    setPwdBusy(true);
+    try {
+      await api("/api/v1/auth/change-password", {
+        method: "POST",
+        body: { currentPassword: pwdForm.currentPassword, newPassword: pwdForm.newPassword },
+      });
+      push({ title: "Password updated" });
+      setPwdOpen(false);
+      setPwdForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+    } catch (cause) {
+      push({ tone: "error", title: "Could not change password", description: errorMessage(cause) });
+    } finally {
+      setPwdBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -228,8 +293,11 @@ export default function SettingsPage() {
         onChange={setTab}
         tabs={[
           { value: "company", label: "Company" },
+          { value: "workspaces", label: "Branches", count: workspaces.data?.length ?? 0 },
           { value: "team", label: "Team", count: team.data?.length ?? 0 },
+          { value: "roles", label: "Roles" },
           { value: "tax", label: "Tax rates", count: taxRates.data?.length ?? 0 },
+          { value: "appearance", label: "Appearance" },
           { value: "audit", label: "Audit log", count: audit.data?.totalCount ?? 0 },
         ]}
       />
@@ -333,11 +401,208 @@ export default function SettingsPage() {
                     Role changes and membership are checked by the API on every request. The UI does not grant access on
                     its own.
                   </p>
+                  <Button variant="secondary" size="sm" icon="lock" onClick={() => setPwdOpen(true)}>
+                    Change password
+                  </Button>
                 </CardBody>
               </Card>
             </div>
           </div>
         ) : null
+      )}
+
+      {tab === "workspaces" && (
+        <Card>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+            <div>
+              <p className="text-[13px] font-semibold">Branches &amp; workspaces</p>
+              <p className="text-[11px] text-muted">
+                Each workspace isolates catalog, inventory, orders, and accounting inside your tenant.
+              </p>
+            </div>
+            <Button variant="primary" size="sm" icon="plus" onClick={() => setWsOpen(true)}>
+              New branch
+            </Button>
+          </div>
+          {workspaces.loading ? (
+            <TableSkeleton rows={4} columns={5} />
+          ) : workspaces.error ? (
+            <ErrorState message={workspaces.error.message} onRetry={workspaces.reload} />
+          ) : (workspaces.data?.length ?? 0) === 0 ? (
+            <EmptyState icon="building" title="No workspaces" description="Your tenant workspaces will appear here." />
+          ) : (
+            <Table className="min-w-[680px]">
+              <THead>
+                <tr>
+                  <TH>Workspace</TH>
+                  <TH>Currency</TH>
+                  <TH>Time zone</TH>
+                  <TH>Status</TH>
+                  <TH align="right"></TH>
+                </tr>
+              </THead>
+              <tbody>
+                {(workspaces.data ?? []).map((ws) => {
+                  const active = ws.workspaceId === session?.user.workspaceId;
+                  return (
+                    <TR key={ws.workspaceId}>
+                      <TD>
+                        <p className="text-[12.5px] font-medium text-ink">{ws.workspaceName}</p>
+                        <p className="font-mono text-[10px] text-muted">{ws.workspaceId}</p>
+                      </TD>
+                      <TD className="font-mono text-xs">{ws.currencyCode}</TD>
+                      <TD className="text-xs text-muted">{ws.timeZone}</TD>
+                      <TD>
+                        <StatusBadge status={ws.status} />
+                      </TD>
+                      <TD align="right">
+                        {active ? (
+                          <Badge tone="brand">Current</Badge>
+                        ) : (
+                          <Button variant="secondary" size="sm" onClick={() => void switchWorkspace(ws.workspaceId)}>
+                            Switch
+                          </Button>
+                        )}
+                      </TD>
+                    </TR>
+                  );
+                })}
+              </tbody>
+            </Table>
+          )}
+        </Card>
+      )}
+
+      {tab === "roles" && (
+        <div className="space-y-4">
+          <Card>
+            <CardHeader
+              title="Role-based access matrix"
+              description="Enforced server-side by ASP.NET Core authorization policies on every endpoint."
+              action={<Badge tone="brand">Your role: {session?.user.role ?? "Member"}</Badge>}
+            />
+            <Table className="min-w-[760px]">
+              <THead>
+                <tr>
+                  <TH>Capability</TH>
+                  <TH>Policy / Permission</TH>
+                  <TH align="center">Viewer</TH>
+                  <TH align="center">Staff</TH>
+                  <TH align="center">Manager</TH>
+                  <TH align="center">Admin</TH>
+                  <TH align="center">Owner</TH>
+                </tr>
+              </THead>
+              <tbody>
+                {ROLE_MATRIX.map((row) => (
+                  <TR key={row.module}>
+                    <TD className="text-[12px] font-medium text-ink">{row.module}</TD>
+                    <TD className="font-mono text-[10.5px] text-muted">{row.permission}</TD>
+                    {(["Viewer", "Staff", "Manager", "Admin", "Owner"] as const).map((role) => (
+                      <TD key={role} align="center">
+                        {row[role] ? (
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
+                            <Icon name="check" size={11} />
+                          </span>
+                        ) : (
+                          <span className="text-xs text-[#c5c7bc]">—</span>
+                        )}
+                      </TD>
+                    ))}
+                  </TR>
+                ))}
+              </tbody>
+            </Table>
+          </Card>
+
+          <Card>
+            <CardHeader title="Your effective token permissions" description="Claims present on your current JWT session" />
+            <CardBody className="flex flex-wrap gap-1.5">
+              {(session?.user.permissions ?? []).map((perm) => (
+                <Badge key={perm} tone="zinc">
+                  {perm}
+                </Badge>
+              ))}
+            </CardBody>
+          </Card>
+        </div>
+      )}
+
+      {tab === "appearance" && (
+        <div className="grid gap-5 lg:grid-cols-[1.4fr_1fr]">
+          <Card>
+            <CardHeader
+              title="Theme &amp; shell configuration"
+              description="Customize color tokens, table density, branding, and integrated Get Assist shell behaviour."
+              action={
+                <Button variant="ghost" size="sm" onClick={resetConfig}>
+                  Reset defaults
+                </Button>
+              }
+            />
+            <CardBody className="space-y-5">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Theme preset" hint="Updates design tokens across all business screens.">
+                  <Select
+                    value={config.theme}
+                    onChange={(event) => updateConfig({ theme: event.target.value as ThemePreset })}
+                  >
+                    <option value="northwind">Northwind Olive (Default)</option>
+                    <option value="slate">Enterprise Slate &amp; Teal</option>
+                    <option value="cobalt">Cobalt Blue</option>
+                    <option value="host">Host Neutral (Chithii / Get Assist)</option>
+                  </Select>
+                </Field>
+                <Field label="Table &amp; list density">
+                  <Select
+                    value={config.density}
+                    onChange={(event) => updateConfig({ density: event.target.value as ShellDensity })}
+                  >
+                    <option value="comfortable">Comfortable</option>
+                    <option value="compact">Compact</option>
+                  </Select>
+                </Field>
+              </div>
+              <Field label="Custom shell brand title" hint="Overrides the company title shown at the top of the sidebar.">
+                <Input
+                  value={config.brandTitle}
+                  onChange={(event) => updateConfig({ brandTitle: event.target.value })}
+                  placeholder={session?.user.companyName ?? "Northwind Commerce"}
+                />
+              </Field>
+              <div className="rounded-xl border border-line bg-[#faf9f5] p-4 space-y-3">
+                <Switch
+                  checked={config.embeddedPreview}
+                  onChange={(checked) => updateConfig({ embeddedPreview: checked })}
+                  label="Preview Integrated Mode shell"
+                  description="Shows the Integrated badge and Back to Workspace action without changing authentication."
+                />
+                <Field label="Back to Workspace URL" hint="Target URL for the Back to Workspace button in Integrated Mode.">
+                  <Input
+                    value={config.backToWorkspaceUrl}
+                    onChange={(event) => updateConfig({ backToWorkspaceUrl: event.target.value })}
+                    placeholder="https://app.getassist.example/projects/proj_123"
+                    className="font-mono text-xs"
+                  />
+                </Field>
+              </div>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader title="Architecture notes" />
+            <CardBody className="space-y-3 text-xs leading-relaxed text-muted">
+              <p>
+                Business pages consume CSS variables (`--brand`, `--canvas`, `--surface`, `--sidebar`) so Host Platform
+                themes apply without modifying Products, Orders, Inventory, Finance, or Reports.
+              </p>
+              <p>
+                Integrated Mode never grants authorization on its own. Authentication always requires a valid Commerce
+                JWT or signed single-use launch code.
+              </p>
+            </CardBody>
+          </Card>
+        </div>
       )}
 
       {tab === "team" && (
@@ -718,6 +983,99 @@ export default function SettingsPage() {
         confirmLabel="Delete rate"
         loading={deleteBusy}
       />
+
+      <Modal
+        open={wsOpen}
+        onClose={() => setWsOpen(false)}
+        title="New branch / workspace"
+        description="Each workspace has isolated inventory, orders, and accounting."
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setWsOpen(false)} disabled={wsBusy}>
+              Cancel
+            </Button>
+            <Button variant="primary" size="sm" loading={wsBusy} onClick={() => void createWorkspace()}>
+              Create branch
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Field label="Branch / workspace name" required>
+            <Input
+              value={wsForm.name}
+              onChange={(event) => setWsForm({ ...wsForm, name: event.target.value })}
+              placeholder="Flagship Retail Store"
+            />
+          </Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Currency code">
+              <Input
+                value={wsForm.currencyCode}
+                maxLength={3}
+                onChange={(event) => setWsForm({ ...wsForm, currencyCode: event.target.value.toUpperCase() })}
+                className="font-mono uppercase"
+              />
+            </Field>
+            <Field label="Time zone">
+              <Select
+                value={wsForm.timeZone}
+                onChange={(event) => setWsForm({ ...wsForm, timeZone: event.target.value })}
+              >
+                {["UTC", "America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Asia/Dhaka", "Asia/Singapore"].map(
+                  (zone) => (
+                    <option key={zone} value={zone}>
+                      {zone}
+                    </option>
+                  ),
+                )}
+              </Select>
+            </Field>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={pwdOpen}
+        onClose={() => setPwdOpen(false)}
+        title="Change password"
+        description="Update your Commerce account password."
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setPwdOpen(false)} disabled={pwdBusy}>
+              Cancel
+            </Button>
+            <Button variant="primary" size="sm" loading={pwdBusy} onClick={() => void changePassword()}>
+              Update password
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Field label="Current password" required>
+            <Input
+              type="password"
+              value={pwdForm.currentPassword}
+              onChange={(event) => setPwdForm({ ...pwdForm, currentPassword: event.target.value })}
+            />
+          </Field>
+          <Field label="New password" required hint="Minimum 8 characters.">
+            <Input
+              type="password"
+              value={pwdForm.newPassword}
+              onChange={(event) => setPwdForm({ ...pwdForm, newPassword: event.target.value })}
+            />
+          </Field>
+          <Field label="Confirm new password" required>
+            <Input
+              type="password"
+              value={pwdForm.confirmPassword}
+              onChange={(event) => setPwdForm({ ...pwdForm, confirmPassword: event.target.value })}
+            />
+          </Field>
+        </div>
+      </Modal>
 
       <div className="flex items-center gap-2 text-[10.5px] text-muted">
         <Icon name="shield" size={11} />

@@ -116,6 +116,17 @@ export type StockRow = {
   price: number;
 };
 
+export type PriceChange = {
+  variantId: string;
+  variantName: string;
+  sku: string;
+  oldPrice: number;
+  newPrice: number;
+  reason?: string | null;
+  changedBy?: string | null;
+  changedAtUtc: string;
+};
+
 export type Warehouse = {
   id: string;
   name: string;
@@ -565,10 +576,46 @@ export type DeliveryLog = {
 };
 
 export type WorkspaceOption = {
-  id: string;
+  id?: string;
+  workspaceId?: string;
   name: string;
-  companyName: string;
+  companyName?: string;
+  tenantName?: string;
   role: string;
   currencyCode: string;
   isPrimary: boolean;
+};
+
+export type PriceQuoteResponse = {
+  quote: {
+    variantId: string;
+    listPrice: number;
+    unitPrice: number;
+    offerDiscount: number;
+    offerName?: string | null;
+    currencyCode: string;
+  };
+  coupon?: {
+    id: string;
+    code: string;
+    discountAmount: number;
+    type: string;
+    value: number;
+  } | null;
+};
+
+export type InvoiceDetail = {
+  id: string;
+  invoiceNumber: string;
+  issuedAtUtc: string;
+  dueAtUtc: string;
+  amount: number;
+  status: string;
+};
+
+export type ImportResult = {
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
 };

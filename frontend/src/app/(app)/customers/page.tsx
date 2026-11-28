@@ -15,6 +15,8 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  Field,
+  Input,
   Modal,
   PageHeader,
   Pagination,
@@ -33,12 +35,19 @@ export default function CustomersPage() {
   const router = useRouter();
   const { push } = useToast();
   const [search, setSearch] = useState("");
+  const [tagFilter, setTagFilter] = useState("");
   const [type, setType] = useState("");
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState<CustomerFormValue>(emptyCustomerForm);
   const [saving, setSaving] = useState(false);
+  const [dupOpen, setDupOpen] = useState(false);
+  const [dupEmail, setDupEmail] = useState("");
+  const [dupPhone, setDupPhone] = useState("");
+  const [dupBusy, setDupBusy] = useState(false);
+  const [dupResults, setDupResults] = useState<CustomerListItem[] | null>(null);
   const debouncedSearch = useDebounced(search);
+  const debouncedTag = useDebounced(tagFilter);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -47,17 +56,39 @@ export default function CustomersPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, type]);
+  }, [debouncedSearch, debouncedTag, type]);
 
   const customers = useApi<Paged<CustomerListItem>>(
     `/api/v1/customers${query({
       search: debouncedSearch,
+      tag: debouncedTag,
       isBusiness: type === "business" ? true : type === "individual" ? false : undefined,
       page,
       pageSize: 12,
     })}`,
   );
   const report = useApi<CustomerReport>("/api/v1/reports/customers");
+
+  async function checkDuplicates() {
+    if (!dupEmail.trim() && !dupPhone.trim()) {
+      push({ tone: "error", title: "Enter an email or phone number to check" });
+      return;
+    }
+    setDupBusy(true);
+    try {
+      const rows = await api<CustomerListItem[]>(
+        `/api/v1/customers/duplicates${query({
+          email: dupEmail.trim() || undefined,
+          phone: dupPhone.trim() || undefined,
+        })}`,
+      );
+      setDupResults(rows);
+    } catch (cause) {
+      push({ tone: "error", title: "Duplicate check failed", description: errorMessage(cause) });
+    } finally {
+      setDupBusy(false);
+    }
+  }
 
   async function create() {
     if (!form.firstName.trim() || !form.lastName.trim()) {
@@ -100,6 +131,16 @@ export default function CustomersPage() {
         title="Customers"
         description="A single record per customer, with addresses, tags, order history and optional host-platform links."
       >
+        <Button
+          variant="secondary"
+          icon="search"
+          onClick={() => {
+            setDupResults(null);
+            setDupOpen(true);
+          }}
+        >
+          Find duplicates
+        </Button>
         <Button variant="primary" icon="plus" onClick={() => setCreateOpen(true)}>
           New customer
         </Button>
@@ -124,13 +165,27 @@ export default function CustomersPage() {
             className="w-full lg:max-w-[320px]"
           />
           <div className="flex flex-1 flex-wrap items-center gap-2 lg:justify-end">
+            <Input
+              value={tagFilter}
+              onChange={(event) => setTagFilter(event.target.value)}
+              placeholder="Filter by tag…"
+              className="w-[150px]"
+            />
             <Select value={type} onChange={(event) => setType(event.target.value)} className="w-[170px]">
               <option value="">All account types</option>
               <option value="individual">Individuals</option>
               <option value="business">Businesses</option>
             </Select>
-            {type && (
-              <Button variant="ghost" size="sm" icon="close" onClick={() => setType("")}>
+            {(type || tagFilter) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                icon="close"
+                onClick={() => {
+                  setType("");
+                  setTagFilter("");
+                }}
+              >
                 Clear
               </Button>
             )}
@@ -257,6 +312,74 @@ export default function CustomersPage() {
         }
       >
         <CustomerForm value={form} onChange={setForm} />
+      </Modal>
+
+      <Modal
+        open={dupOpen}
+        onClose={() => setDupOpen(false)}
+        title="Find duplicate customers"
+        description="Search by email or phone before creating or linking an external Get Assist contact."
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setDupOpen(false)}>
+              Close
+            </Button>
+            <Button variant="primary" size="sm" icon="search" loading={dupBusy} onClick={() => void checkDuplicates()}>
+              Check duplicates
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Email">
+              <Input
+                type="email"
+                value={dupEmail}
+                onChange={(event) => setDupEmail(event.target.value)}
+                placeholder="customer@example.com"
+              />
+            </Field>
+            <Field label="Phone">
+              <Input
+                value={dupPhone}
+                onChange={(event) => setDupPhone(event.target.value)}
+                placeholder="+1 555 0100"
+              />
+            </Field>
+          </div>
+          {dupResults && (
+            <div className="rounded-xl border border-line bg-[#faf9f5] p-3">
+              {dupResults.length === 0 ? (
+                <p className="text-xs text-muted">No matching customers found in this workspace.</p>
+              ) : (
+                <div className="divide-y divide-line">
+                  {dupResults.map((match) => (
+                    <div key={match.id} className="flex items-center justify-between gap-3 py-2 text-xs">
+                      <div>
+                        <p className="font-medium text-ink">{match.displayName}</p>
+                        <p className="text-[11px] text-muted">
+                          {match.email ?? "No email"} · {match.phone ?? "No phone"}
+                        </p>
+                      </div>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setDupOpen(false);
+                          router.push(`/customers/${match.id}`);
+                        }}
+                      >
+                        Open profile
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </Modal>
 
       <div className="flex items-center gap-2 text-[10.5px] text-muted">

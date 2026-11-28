@@ -5,8 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { useApi } from "@/lib/hooks";
-import type { ProductDetail } from "@/lib/types";
-import { currency, number } from "@/lib/format";
+import type { PriceChange, ProductDetail } from "@/lib/types";
+import { currency, dateTime, number } from "@/lib/format";
 import { Icon } from "@/components/icons";
 import {
   Badge,
@@ -17,6 +17,7 @@ import {
   ConfirmModal,
   ErrorState,
   InfoRow,
+  Modal,
   PageHeader,
   Skeleton,
   StatusBadge,
@@ -29,13 +30,25 @@ import {
 } from "@/components/ui";
 import { ProgressBar } from "@/components/charts";
 
+function parseAttrs(json?: string | null): [string, string][] {
+  if (!json) return [];
+  try {
+    const obj = JSON.parse(json) as Record<string, unknown>;
+    return Object.entries(obj).map(([k, v]) => [k, String(v)]);
+  } catch {
+    return [];
+  }
+}
+
 export default function ProductDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const { push } = useToast();
   const { data, loading, error, reload } = useApi<ProductDetail>(`/api/v1/products/${params.id}`);
+  const history = useApi<PriceChange[]>(`/api/v1/products/${params.id}/price-history`);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
   async function remove() {
     setDeleting(true);
@@ -110,9 +123,20 @@ export default function ProductDetailPage() {
         <div className="space-y-5">
           <Card>
             <CardBody className="flex flex-col gap-5 sm:flex-row">
-              <div className="flex h-32 w-full shrink-0 items-center justify-center rounded-xl border border-dashed border-line-strong bg-[#faf9f5] text-[#a3a79a] sm:w-32">
-                <Icon name="box" size={34} />
-              </div>
+              {data.images[0] ? (
+                <button
+                  type="button"
+                  onClick={() => setLightboxUrl(data.images[0])}
+                  className="flex h-32 w-full shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line bg-[#faf9f5] sm:w-32"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={data.images[0]} alt={data.name} className="h-full w-full object-cover" />
+                </button>
+              ) : (
+                <div className="flex h-32 w-full shrink-0 items-center justify-center rounded-xl border border-dashed border-line-strong bg-[#faf9f5] text-[#a3a79a] sm:w-32">
+                  <Icon name="box" size={34} />
+                </div>
+              )}
               <div className="min-w-0 flex-1">
                 <p className="text-[11px] font-medium uppercase tracking-[0.1em] text-muted">Description</p>
                 <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">
@@ -155,14 +179,28 @@ export default function ProductDetailPage() {
                 </tr>
               </THead>
               <tbody>
-                {data.variants.map((variant) => (
-                  <TR key={variant.id}>
-                    <TD>
-                      <p className="text-[12.5px] font-medium">{variant.name}</p>
-                      {variant.isDefault && (
-                        <p className="mt-0.5 text-[10px] text-muted">Default variant</p>
-                      )}
-                    </TD>
+                {data.variants.map((variant) => {
+                  const attrs = parseAttrs(variant.attributesJson);
+                  return (
+                    <TR key={variant.id}>
+                      <TD>
+                        <p className="text-[12.5px] font-medium">{variant.name}</p>
+                        {variant.isDefault && (
+                          <p className="mt-0.5 text-[10px] text-muted">Default variant</p>
+                        )}
+                        {attrs.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {attrs.map(([k, v]) => (
+                              <span
+                                key={k}
+                                className="rounded border border-line bg-[#faf9f5] px-1.5 py-0.5 text-[9.5px] text-muted"
+                              >
+                                {k}: {v}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </TD>
                     <TD className="font-mono text-[10.5px] text-muted">{variant.sku}</TD>
                     <TD align="right" className="num text-[12px]">
                       {currency(variant.price, data.currencyCode)}
@@ -180,9 +218,71 @@ export default function ProductDetailPage() {
                       </Badge>
                     </TD>
                   </TR>
-                ))}
+                  );
+                })}
               </tbody>
             </Table>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Price history"
+              description="Recorded whenever a product update changes a variant price"
+              action={<Badge tone="zinc">{history.data?.length ?? 0} change(s)</Badge>}
+            />
+            {history.loading ? (
+              <div className="space-y-2 p-4">
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-8 w-full" />
+              </div>
+            ) : history.error ? (
+              <div className="px-5 py-4 text-[12px] text-muted">Price history is unavailable right now.</div>
+            ) : !history.data || history.data.length === 0 ? (
+              <div className="flex items-center gap-3 px-5 py-5 text-[12px] text-muted">
+                <Icon name="wallet" size={15} />
+                No price changes recorded yet. Editing a variant price creates an entry here.
+              </div>
+            ) : (
+              <Table className="min-w-[620px]">
+                <THead>
+                  <tr>
+                    <TH>When</TH>
+                    <TH>Variant</TH>
+                    <TH align="right">Old price</TH>
+                    <TH align="right">New price</TH>
+                    <TH>Reason</TH>
+                    <TH>Changed by</TH>
+                  </tr>
+                </THead>
+                <tbody>
+                  {history.data.map((change, index) => (
+                    <TR key={`${change.variantId}-${change.changedAtUtc}-${index}`}>
+                      <TD className="whitespace-nowrap text-[11px] text-muted">
+                        {dateTime(change.changedAtUtc)}
+                      </TD>
+                      <TD>
+                        <p className="text-[12px] font-medium">{change.variantName}</p>
+                        <p className="mt-0.5 font-mono text-[10px] text-muted">{change.sku}</p>
+                      </TD>
+                      <TD align="right" className="num text-[12px] text-muted">
+                        {currency(change.oldPrice, data.currencyCode)}
+                      </TD>
+                      <TD align="right">
+                        <span
+                          className={`num text-[12px] font-medium ${
+                            change.newPrice >= change.oldPrice ? "text-emerald-700" : "text-rose-600"
+                          }`}
+                        >
+                          {currency(change.newPrice, data.currencyCode)}
+                        </span>
+                      </TD>
+                      <TD className="text-[11.5px] text-muted">{change.reason ?? "—"}</TD>
+                      <TD className="text-[11.5px] text-muted">{change.changedBy ?? "System"}</TD>
+                    </TR>
+                  ))}
+                </tbody>
+              </Table>
+            )}
           </Card>
 
           <Card>
@@ -198,13 +298,19 @@ export default function ProductDetailPage() {
               </div>
             ) : (
               <div className="grid gap-3 p-4 sm:grid-cols-3">
-                {data.images.map((image) => (
-                  <div
-                    key={image}
-                    className="flex h-28 items-center justify-center overflow-hidden rounded-lg border border-line bg-[#faf9f5] text-[10px] text-muted"
+                {data.images.map((image, idx) => (
+                  <button
+                    key={`${image}-${idx}`}
+                    type="button"
+                    onClick={() => setLightboxUrl(image)}
+                    className="group relative flex h-32 items-center justify-center overflow-hidden rounded-lg border border-line bg-[#faf9f5] text-[10px] text-muted transition-all hover:border-brand"
                   >
-                    <span className="line-clamp-2 break-all px-2">{image}</span>
-                  </div>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={image} alt={`${data.name} ${idx + 1}`} className="h-full w-full object-cover" />
+                    <span className="absolute inset-x-0 bottom-0 truncate bg-black/55 px-2 py-1 text-left font-mono text-[9.5px] text-white opacity-0 transition-opacity group-hover:opacity-100">
+                      {image}
+                    </span>
+                  </button>
                 ))}
               </div>
             )}
@@ -213,7 +319,19 @@ export default function ProductDetailPage() {
 
         <div className="space-y-5">
           <Card>
-            <CardHeader title="Pricing" action={<Badge tone="brand">{data.currencyCode}</Badge>} />
+            <CardHeader
+              title="Pricing"
+              action={
+                <div className="flex items-center gap-2">
+                  <Link href={`/offers?tab=quote&variantId=${data.variants[0]?.id ?? ""}`}>
+                    <Button variant="ghost" size="sm">
+                      Quote
+                    </Button>
+                  </Link>
+                  <Badge tone="brand">{data.currencyCode}</Badge>
+                </div>
+              }
+            />
             <CardBody className="divide-y divide-[#efede5] py-0">
               <InfoRow label="Base price" value={currency(data.basePrice, data.currencyCode)} />
               <InfoRow label="Cost price" value={currency(data.costPrice, data.currencyCode)} />
@@ -287,6 +405,16 @@ export default function ProductDetailPage() {
         confirmLabel="Archive product"
         loading={deleting}
       />
+
+      <Modal open={Boolean(lightboxUrl)} onClose={() => setLightboxUrl(null)} title={data.name} size="lg">
+        {lightboxUrl && (
+          <div className="flex flex-col items-center gap-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={lightboxUrl} alt={data.name} className="max-h-[60vh] rounded-lg object-contain" />
+            <p className="break-all font-mono text-[10.5px] text-muted">{lightboxUrl}</p>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
